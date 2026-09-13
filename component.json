@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "componentId": "ai-verse-connections",
+  "version": "0.1.0-beta.1",
+  "compatibility": {
+    "node": ">=20",
+    "mcp": ["2026-07-28"]
+  },
+  "installSource": "repository/npm-compatible-package",
+  "setupRequired": true,
+  "lifecycleCommands": ["install", "setup", "status", "doctor", "enable", "disable", "update", "uninstall"],
+  "structuredOutput": true,
+  "authorityTransferSeparate": true,
+  "uninstallPreservesCanonicalState": true,
+  "requestedScopes": ["system", "workspace", "external-connection-capabilities"]
+}
