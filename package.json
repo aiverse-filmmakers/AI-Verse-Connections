@@ -1,0 +1,15 @@
+{
+  "name": "@ai-verse/connections",
+  "version": "0.1.0-beta.1",
+  "description": "AI-Verse Connections public-beta v1 external connection control plane and execution boundary",
+  "type": "module",
+  "engines": { "node": ">=20.0.0" },
+  "bin": { "aiverse-connections": "./bin/aiverse-connections.js" },
+  "scripts": {
+    "test": "node --test",
+    "test:integration": "node --test test/connections.integration.test.js",
+    "check": "node --check src/*.js && node --check src/providers/*.js && node --check bin/*.js && npm test"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}
