@@ -5,7 +5,7 @@ import { COMPONENT_ID, VERSION } from './constants.js';
 import { fail } from './errors.js';
 
 export async function install() {
-  await this.store.ensureHome();
+  await this.store.claimHome();
   return this.store.setLifecycle({ installed: true, installedVersion: VERSION, enabled: false });
 }
 
@@ -62,7 +62,10 @@ export async function update() {
 
 
 export async function uninstall({ purge = false } = {}) {
-  if (purge) { await this.store.purgeAll(); return { uninstalled: true, purged: true }; }
+  if (purge) {
+    const purgeResult = await this.store.purgeAll();
+    return { uninstalled: true, purged: true, ...purgeResult };
+  }
   const state = await this.store.setLifecycle({ installed: false, setup: false, enabled: false });
   return { uninstalled: true, purged: false, statePreserved: true, lifecycle: state };
 }
