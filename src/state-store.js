@@ -253,13 +253,15 @@ export class StateStore {
     });
   }
 
+  async setLifecycleUnlocked(patch) {
+    const current = await this.getLifecycle();
+    const next = { ...current, ...patch, schemaVersion: STATE_SCHEMA_VERSION, updatedAt: nowIso() };
+    await this.atomicWriteJson(this.lifecyclePath, next);
+    return next;
+  }
+
   async setLifecycle(patch) {
-    return this.withLock(async () => {
-      const current = await this.getLifecycle();
-      const next = { ...current, ...patch, schemaVersion: STATE_SCHEMA_VERSION, updatedAt: nowIso() };
-      await this.atomicWriteJson(this.lifecyclePath, next);
-      return next;
-    });
+    return this.withLock(() => this.setLifecycleUnlocked(patch));
   }
 
   async getRegistry() {
