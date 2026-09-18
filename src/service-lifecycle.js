@@ -24,7 +24,15 @@ export async function setup({ systemId }) {
         { currentSystemId: lifecycle.systemId, requestedSystemId: systemId }
       );
     }
-    await this.store.getRegistry();
+    const registry = await this.store.getRegistry();
+    const foreign = Object.values(registry.connections).filter((connection) => connection.systemId !== systemId);
+    if (foreign.length) {
+      fail(
+        'SYSTEM_REBIND_REQUIRED',
+        'setup cannot bind while the registry contains connections for another system; use the explicit rebind-system workflow',
+        { requestedSystemId: systemId, connectionIds: foreign.map((connection) => connection.id) }
+      );
+    }
     return this.store.setLifecycleUnlocked({ setup: true, enabled: true, systemId });
   });
 }
