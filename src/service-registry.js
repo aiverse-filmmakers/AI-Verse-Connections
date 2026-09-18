@@ -1,6 +1,7 @@
 import { DEFAULT_LIMITS, MCP_PROTOCOL_VERSION } from './constants.js';
 import { fail } from './errors.js';
 import { effectiveLimits } from './policy.js';
+import { assertInstallationSystem } from './system-binding.js';
 import { nowIso, sha256 } from './util.js';
 
 export function baseConnection({ id, provider, systemId, workspaceIds = [], credentialHandle = 'none', authorization = { type: 'none' }, config, limits = {} }) {
@@ -31,7 +32,9 @@ export async function addGeneric(opts) {
     capability, sourceKind: 'generic-api', sourceName: 'request', admitted: false, reviewRequired: false,
     risk: opts.risk || 'write', fingerprint: sha256(connection.config), metadataTrusted: true
   };
-  await this.store.mutateRegistry((r) => {
+  await this.store.mutateRegistry(async (r) => {
+    const lifecycle = await this.store.getLifecycle();
+    assertInstallationSystem(lifecycle, connection.systemId, { subject: `Connection ${connection.id}` });
     if (r.connections[connection.id]) fail('CONNECTION_EXISTS', `Connection ${connection.id} already exists`);
     r.connections[connection.id] = connection;
   });
@@ -49,7 +52,9 @@ export async function addMcp(opts) {
     connection.authorization.resource = resource;
   }
   connection.mcp = { protocolVersion: MCP_PROTOCOL_VERSION, origin, serverIdentity: null, toolsFingerprint: null, resourcesFingerprint: null, resources: [] };
-  await this.store.mutateRegistry((r) => {
+  await this.store.mutateRegistry(async (r) => {
+    const lifecycle = await this.store.getLifecycle();
+    assertInstallationSystem(lifecycle, connection.systemId, { subject: `Connection ${connection.id}` });
     if (r.connections[connection.id]) fail('CONNECTION_EXISTS', `Connection ${connection.id} already exists`);
     if (connection.credentialHandle && connection.credentialHandle !== 'none') {
       const reused = Object.values(r.connections).find((c) => c.provider === 'mcp' && c.credentialHandle === connection.credentialHandle && c.mcp?.origin && c.mcp.origin !== origin);
@@ -69,6 +74,18 @@ export async function getConnection(id) {
 }
 
 
+export async function getBoundConnection(id) {
+  return this.store.withLock(async () => {
+    const lifecycle = await this.store.getLifecycle();
+    const registry = await this.store.getRegistry();
+    const c = registry.connections[id];
+    if (!c) fail('CONNECTION_NOT_FOUND', `Connection ${id} not found`);
+    assertInstallationSystem(lifecycle, c.systemId, { subject: `Connection ${id}` });
+    return structuredClone(c);
+  });
+}
+
+
 export async function listConnections() {
   const registry = await this.store.getRegistry();
   return Object.values(registry.connections).map((c) => ({
@@ -79,7 +96,7 @@ export async function listConnections() {
 
 
 export async function verify(id) {
-  const initial = await this.getConnection(id);
+  const initial = await this.getBoundConnection(id);
   const adapter = this.adapters[initial.provider];
   if (!adapter) fail('PROVIDER_UNSUPPORTED', `Provider ${initial.provider} is unsupported`);
   let result;
@@ -91,8 +108,11 @@ export async function verify(id) {
     });
     throw err;
   }
-  return this.store.mutateRegistry((r) => {
+  return this.store.mutateRegistry(async (r) => {
+    const lifecycle = await this.store.getLifecycle();
     const c = r.connections[id];
+    if (!c) fail('CONNECTION_NOT_FOUND', `Connection ${id} not found`);
+    assertInstallationSystem(lifecycle, c.systemId, { subject: `Connection ${id}` });
     c.status = { ...c.status, liveVerified: true, healthy: !!result.healthy, authorized: !!result.authorized, lastVerifiedAt: nowIso(), lastError: null };
     if (c.provider === 'mcp') {
       const previous = c.capabilities || {};

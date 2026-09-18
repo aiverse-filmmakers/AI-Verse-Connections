@@ -37,6 +37,7 @@ export async function main(argv = process.argv.slice(2)) {
   switch (cmd) {
     case 'install': result = await service.install(); break;
     case 'setup': result = await service.setup({ systemId: f.system }); break;
+    case 'rebind-system': result = await service.rebindSystem({ fromSystemId: f['from-system'], systemId: f.system }); break;
     case 'status': result = await service.status(); break;
     case 'doctor': result = await service.doctor(); break;
     case 'enable': result = await service.enable(); break;
@@ -78,7 +79,7 @@ export async function main(argv = process.argv.slice(2)) {
       break;
     }
     default:
-      throw new ConnectionsError('USAGE', 'Usage: aiverse-connections <install|setup|status|doctor|enable|disable|update|uninstall|descriptor|credential|connection>');
+      throw new ConnectionsError('USAGE', 'Usage: aiverse-connections <install|setup|rebind-system|status|doctor|enable|disable|update|uninstall|descriptor|credential|connection>');
   }
   output(result, bool(f.json));
 }

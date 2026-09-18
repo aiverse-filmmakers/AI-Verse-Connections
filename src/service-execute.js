@@ -6,7 +6,7 @@ import { nowIso, randomId } from './util.js';
 export async function execute(id, request) {
   const lifecycle = await this.store.getLifecycle();
   if (!lifecycle.installed || !lifecycle.setup || !lifecycle.enabled) fail('COMPONENT_NOT_READY', 'Connections component is not enabled and ready');
-  const initial = await this.getConnection(id);
+  const initial = await this.getBoundConnection(id);
   const initialCap = assertConnectionUsable(initial, request);
   const limits = effectiveLimits(initial);
   const receipts = await this.store.readReceipts();
@@ -31,7 +31,7 @@ export async function execute(id, request) {
   if (this.hooks.beforeFinalEdge) await this.hooks.beforeFinalEdge({ connection: initial, request });
 
   // Mandatory final-edge authority re-check. Any revocation or narrowing after planning wins here.
-  const current = await this.getConnection(id);
+  const current = await this.getBoundConnection(id);
   const capability = assertConnectionUsable(current, request);
   if (capability.fingerprint !== initialCap.fingerprint || capability.risk !== initialCap.risk) fail('AUTHORITY_CHANGED', 'Connection authority changed between plan and execution edge');
   const adapter = this.adapters[current.provider];

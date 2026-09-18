@@ -9,6 +9,7 @@
   "installSource": "repository/npm-compatible-package",
   "setupRequired": true,
   "lifecycleCommands": ["install", "setup", "status", "doctor", "enable", "disable", "update", "uninstall"],
+  "migrationCommands": ["rebind-system"],
   "structuredOutput": true,
   "authorityTransferSeparate": true,
   "uninstallPreservesCanonicalState": true,
