@@ -1,11 +1,14 @@
 import { fail } from './errors.js';
+import { assertInstallationSystem } from './system-binding.js';
 import { nowIso, sha256 } from './util.js';
 
 export async function admitCapability(id, { sourceName, capability, risk = 'write' }) {
   if (!['read', 'write', 'admin'].includes(risk)) fail('INVALID_RISK', 'Risk must be read, write or admin');
-  return this.store.mutateRegistry((r) => {
+  return this.store.mutateRegistry(async (r) => {
+    const lifecycle = await this.store.getLifecycle();
     const c = r.connections[id];
     if (!c) fail('CONNECTION_NOT_FOUND', `Connection ${id} not found`);
+    assertInstallationSystem(lifecycle, c.systemId, { subject: `Connection ${id}` });
     const entry = Object.values(c.capabilities || {}).find((x) => x.sourceName === sourceName || x.capability === capability);
     if (!entry) fail('CAPABILITY_NOT_FOUND', `No discovered capability matches ${sourceName || capability}`);
     const oldKey = entry.capability;
@@ -25,9 +28,11 @@ export async function admitCapability(id, { sourceName, capability, risk = 'writ
 
 
 export async function approveConnection(id) {
-  return this.store.mutateRegistry((r) => {
+  return this.store.mutateRegistry(async (r) => {
+    const lifecycle = await this.store.getLifecycle();
     const c = r.connections[id];
     if (!c) fail('CONNECTION_NOT_FOUND', `Connection ${id} not found`);
+    assertInstallationSystem(lifecycle, c.systemId, { subject: `Connection ${id}` });
     if (!c.status.liveVerified || !c.status.healthy || !c.status.authorized) fail('VERIFY_REQUIRED', 'Connection must be live-verified, healthy and authorized before approval');
     const admitted = Object.values(c.capabilities || {}).filter((x) => x.admitted && !x.reviewRequired);
     if (!admitted.length) fail('NO_ADMITTED_CAPABILITIES', 'Admit at least one capability before approval');
@@ -50,9 +55,11 @@ export async function revoke(id) {
 
 
 export async function reauth(id, credentialHandle) {
-  return this.store.mutateRegistry((r) => {
+  return this.store.mutateRegistry(async (r) => {
+    const lifecycle = await this.store.getLifecycle();
     const c = r.connections[id];
     if (!c) fail('CONNECTION_NOT_FOUND', `Connection ${id} not found`);
+    assertInstallationSystem(lifecycle, c.systemId, { subject: `Connection ${id}` });
     c.credentialHandle = credentialHandle;
     c.status = { ...c.status, liveVerified: false, healthy: false, authorized: false, approved: false, lastError: null };
     c.reauthAt = nowIso();
