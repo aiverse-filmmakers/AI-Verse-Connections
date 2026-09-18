@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ConnectionsService } from '../src/service.js';
 import { tmpHome, startServer, readyService, approveGeneric, expectCode } from '../test-support/helpers.js';
 
 function genericOptions(baseUrl, systemId = 'sys-a') {
