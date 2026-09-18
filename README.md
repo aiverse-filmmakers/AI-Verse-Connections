@@ -33,6 +33,17 @@ aiverse-connections setup --system my-system --json
 
 Setup creates/opens the local Connections state boundary and enables the component. It does not connect an external account by itself.
 
+The setup system ID is the canonical installation binding. Re-running `setup` with a different system ID is rejected. To intentionally move the installation and its connection registry to another AI-Verse system, use the explicit rebind workflow:
+
+```bash
+aiverse-connections rebind-system \
+  --from-system old-system \
+  --system new-system \
+  --json
+```
+
+Rebinding migrates connection system IDs under the Connections state lock and clears live verification, authorization, approval and capability admission. Each migrated connection must be freshly verified, re-admitted and approved before it can execute in the new system. A failed/interrupted rebind remains fail-closed because connection execution always requires an exact match with the current installation binding.
+
 For encrypted persistent credentials, provide a local master key outside the registry:
 
 ```bash
