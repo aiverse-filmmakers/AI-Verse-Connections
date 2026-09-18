@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { COMPONENT_ID, VERSION } from './constants.js';
 import { fail } from './errors.js';
-import { assertInstallationSystem, installationSystemId } from './system-binding.js';
+import { installationSystemId } from './system-binding.js';
 import { nowIso } from './util.js';
 
 export async function install() {
