@@ -221,6 +221,44 @@ test('WSA-2026-030 setup cannot silently rebind and explicit rebind forces fresh
   assert.equal(externalCalls, 1);
 });
 
+test('WSA-2026-030 setup refuses legacy foreign registry state even when lifecycle binding is missing', async () => {
+  const home = await tmpHome();
+  const service = await readyService(home);
+  await service.addGeneric({
+    ...genericOptions('https://api.example.test'),
+    id: 'legacy'
+  });
+
+  await service.store.setLifecycle({ setup: false, enabled: false, systemId: null });
+  await expectCode(service.setup({ systemId: 'sys-b' }), 'SYSTEM_REBIND_REQUIRED');
+
+  const lifecycle = (await service.status()).lifecycle;
+  assert.equal(lifecycle.systemId, null);
+  assert.equal((await service.getConnection('legacy')).systemId, 'sys-a');
+});
+
+test('WSA-2026-030 explicit rebind safely resumes a registry-first interrupted migration', async () => {
+  const home = await tmpHome();
+  const service = await readyService(home);
+  await service.addGeneric({
+    ...genericOptions('https://api.example.test'),
+    id: 'partial'
+  });
+
+  // Simulate the fail-closed state after registry commit but before lifecycle commit.
+  await setConnectionSystem(service, 'partial', 'sys-b');
+  await expectCode(service.getBoundConnection('partial'), 'SYSTEM_BINDING_MISMATCH');
+
+  const rebound = await service.rebindSystem({ fromSystemId: 'sys-a', systemId: 'sys-b' });
+  assert.equal(rebound.systemId, 'sys-b');
+  assert.equal((await service.status()).lifecycle.systemId, 'sys-b');
+
+  const connection = await service.getConnection('partial');
+  assert.equal(connection.systemId, 'sys-b');
+  assert.equal(connection.status.liveVerified, false);
+  assert.equal(connection.status.approved, false);
+});
+
 test('WSA-2026-030 explicit rebind refuses undeclared third-system registry state', async () => {
   const home = await tmpHome();
   const service = await readyService(home);
