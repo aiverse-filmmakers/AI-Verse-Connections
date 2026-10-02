@@ -1,7 +1,7 @@
 import { fail } from './errors.js';
 
 function mcpOrigin(connection) {
-  return connection.mcp?.origin || new URL(connection.config.url).origin;
+  return new URL(connection.config.url).origin;
 }
 
 export function assertMcpCredentialOriginBinding(registry, connection, credentialHandle = connection?.credentialHandle) {
@@ -13,8 +13,7 @@ export function assertMcpCredentialOriginBinding(registry, connection, credentia
     candidate.id !== connection.id &&
     candidate.provider === 'mcp' &&
     candidate.credentialHandle === credentialHandle &&
-    candidate.mcp?.origin &&
-    candidate.mcp.origin !== origin
+    mcpOrigin(candidate) !== origin
   );
 
   if (reused) {
@@ -25,7 +24,7 @@ export function assertMcpCredentialOriginBinding(registry, connection, credentia
         connectionId: connection.id,
         conflictingConnectionId: reused.id,
         origin,
-        conflictingOrigin: reused.mcp.origin
+        conflictingOrigin: mcpOrigin(reused)
       }
     );
   }
