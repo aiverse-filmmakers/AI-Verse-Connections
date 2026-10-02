@@ -1,6 +1,4 @@
 import crypto from 'node:crypto';
-import net from 'node:net';
-import dns from 'node:dns/promises';
 import { fail } from './errors.js';
 
 export function stableStringify(value) {
@@ -74,41 +72,7 @@ export function detectInstructionLikeContent(value) {
   return { suspicious: hits.length > 0, patterns: hits };
 }
 
-function isPrivateIpv4(ip) {
-  const p = ip.split('.').map(Number);
-  if (p.length !== 4 || p.some((n) => Number.isNaN(n))) return false;
-  return p[0] === 10 || p[0] === 127 || (p[0] === 169 && p[1] === 254) ||
-    (p[0] === 172 && p[1] >= 16 && p[1] <= 31) || (p[0] === 192 && p[1] === 168) ||
-    (p[0] === 100 && p[1] >= 64 && p[1] <= 127) || p[0] === 0 || p[0] >= 224;
-}
-
-function isPrivateIpv6(ip) {
-  const x = ip.toLowerCase();
-  return x === '::1' || x === '::' || x.startsWith('fc') || x.startsWith('fd') || x.startsWith('fe8') || x.startsWith('fe9') || x.startsWith('fea') || x.startsWith('feb');
-}
-
-export function isPrivateIp(ip) {
-  return net.isIPv4(ip) ? isPrivateIpv4(ip) : net.isIPv6(ip) ? isPrivateIpv6(ip) : false;
-}
-
-export async function assertNetworkTargetAllowed(urlString, { allowPrivateNetwork = false } = {}) {
-  const url = new URL(urlString);
-  if (url.protocol !== 'https:' && !allowPrivateNetwork) {
-    fail('HTTPS_REQUIRED', 'External connections require HTTPS unless private-network access was explicitly enabled');
-  }
-  const host = url.hostname;
-  if (host === 'localhost' && !allowPrivateNetwork) fail('PRIVATE_NETWORK_FORBIDDEN', 'Local/private network targets are disabled by default');
-  if (net.isIP(host)) {
-    if (isPrivateIp(host) && !allowPrivateNetwork) fail('PRIVATE_NETWORK_FORBIDDEN', `Private/reserved IP target is not allowed: ${host}`);
-    return;
-  }
-  let resolved;
-  try { resolved = await dns.lookup(host, { all: true, verbatim: true }); }
-  catch (err) { fail('DNS_LOOKUP_FAILED', `DNS lookup failed for ${host}`, { cause: err.message }); }
-  if (!allowPrivateNetwork && resolved.some((r) => isPrivateIp(r.address))) {
-    fail('PRIVATE_NETWORK_FORBIDDEN', `DNS for ${host} resolved to a private/reserved address`);
-  }
-}
+export { isPrivateIp, assertNetworkTargetAllowed } from './network-target.js';
 
 export function cleanHeaderName(name) {
   if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(name)) fail('INVALID_HEADER_NAME', `Invalid header name: ${name}`);
