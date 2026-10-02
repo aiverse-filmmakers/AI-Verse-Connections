@@ -36,7 +36,7 @@ function normalizeTool(tool) {
 }
 
 export class McpAdapter {
-  constructor(credentials) { this.credentials = credentials; }
+  constructor(credentials) { this.credentials = credentials; this.network = undefined; }
 
   validateConfig(connection) {
     const url = normalizeBaseUrl(connection.config.url);
@@ -67,7 +67,7 @@ export class McpAdapter {
       jsonrpc: '2.0', id, method,
       params: { ...(params || {}), _meta: requestMeta() }
     });
-    const { response, buffer } = await boundedFetch(url, { method: 'POST', headers, body }, limits, origin);
+    const { response, buffer } = await boundedFetch(url, { method: 'POST', headers, body }, limits, origin, this.network);
     if (response.status === 401 || response.status === 403) fail('MCP_NOT_AUTHORIZED', `MCP server rejected authorization with ${response.status}`);
     if (!response.ok) fail('MCP_HTTP_ERROR', `MCP server returned HTTP ${response.status}`);
     const contentType = response.headers.get('content-type') || '';
