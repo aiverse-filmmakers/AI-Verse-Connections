@@ -35,6 +35,7 @@ function requestPinned(url, options, limits, resolution, network = {}) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let sent = false;
+    let timer;
     const headers = new Headers(options.headers || {});
     const requestImpl = requestFunctionFor(url, network);
     const lookup = createPinnedLookup(resolution.hostname, resolution.pinned);
@@ -111,7 +112,7 @@ function requestPinned(url, options, limits, resolution, network = {}) {
       });
     });
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       req.destroy(new ConnectionsError('REQUEST_TIMEOUT', 'External request exceeded configured timeout'));
     }, limits.timeoutMs);
 
