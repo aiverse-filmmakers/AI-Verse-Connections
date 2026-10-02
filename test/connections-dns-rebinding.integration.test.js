@@ -154,11 +154,12 @@ test('WSA-2026-051 rejects mixed public/private IPv4 and IPv6 DNS sets before tr
 
 test('WSA-2026-051 normalizes localhost hostname forms before private-network authorization', async () => {
   let lookupCalls = 0;
+  const target = 'https://LOCALHOST./v1';
   await expectConnectionCode(boundedFetch(
-    'https://LOCALHOST./v1',
+    target,
     { method: 'GET', headers: {} },
     DEFAULT_LIMITS,
-    'https://localhost',
+    new URL(target).origin,
     { lookup: async () => { lookupCalls++; return [{ address: '93.184.216.34', family: 4 }]; } }
   ), 'PRIVATE_NETWORK_FORBIDDEN');
   assert.equal(lookupCalls, 0);
