@@ -1,6 +1,7 @@
 import { boundedFetch } from '../http.js';
 import { fail } from '../errors.js';
 import { cleanHeaderName, detectInstructionLikeContent, normalizeBaseUrl, normalizeOrigin } from '../util.js';
+import { assertGenericTargetPathAllowed, assertNormalizedPathAllowed, canonicalizeAllowedPathPrefixes, canonicalizeGenericRequestTarget } from '../path-policy.js';
 
 const HOP_BY_HOP = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'proxy-authorization', 'proxy-authenticate', 'upgrade']);
 
@@ -11,8 +12,9 @@ export class GenericApiAdapter {
     const baseUrl = normalizeBaseUrl(connection.config.baseUrl);
     const origin = normalizeOrigin(baseUrl);
     const methods = (connection.config.allowedMethods || ['GET']).map((m) => String(m).toUpperCase());
-    const prefixes = connection.config.allowedPathPrefixes || ['/'];
-    if (!methods.length || !prefixes.length) fail('GENERIC_POLICY_REQUIRED', 'Generic API connections require allowed methods and path prefixes');
+    const rawPrefixes = connection.config.allowedPathPrefixes || ['/'];
+    if (!methods.length || !rawPrefixes.length) fail('GENERIC_POLICY_REQUIRED', 'Generic API connections require allowed methods and path prefixes');
+    const prefixes = canonicalizeAllowedPathPrefixes(rawPrefixes);
     return { baseUrl, origin, methods, prefixes };
   }
 
@@ -30,10 +32,8 @@ export class GenericApiAdapter {
     const method = String(input.method || 'GET').toUpperCase();
     if (!methods.includes(method)) fail('METHOD_NOT_ALLOWED', `Method ${method} is not permitted by this connection`);
     const path = String(input.path || '/');
-    if (!path.startsWith('/')) fail('INVALID_PATH', 'Generic API path must begin with /');
-    if (!prefixes.some((p) => path === p || path.startsWith(p.endsWith('/') ? p : `${p}/`))) fail('PATH_NOT_ALLOWED', `Path ${path} is outside admitted prefixes`);
-    const target = new URL(path, `${baseUrl}/`);
-    if (target.origin !== origin) fail('ORIGIN_MISMATCH', 'Generic API request must remain on the registered origin');
+    const target = canonicalizeGenericRequestTarget(path, baseUrl, origin);
+    assertNormalizedPathAllowed(target.pathname, prefixes);
     const headers = {};
     for (const [k, v] of Object.entries(input.headers || {})) {
       const name = cleanHeaderName(k);
@@ -65,6 +65,8 @@ export class GenericApiAdapter {
   async execute(connection, input, limits) {
     const req = this.buildRequest(connection, input);
     const authHeaders = await this.authHeaders(connection);
+    const { prefixes } = this.validateConfig(connection);
+    assertGenericTargetPathAllowed(req.target, req.origin, prefixes);
     const { response, buffer } = await boundedFetch(req.target, {
       method: req.method,
       headers: { ...req.headers, ...authHeaders, Accept: 'application/json, text/plain;q=0.9, */*;q=0.1' },
