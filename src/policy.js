@@ -5,6 +5,13 @@ export function effectiveLimits(connection) {
   return { ...DEFAULT_LIMITS, ...(connection.limits || {}) };
 }
 
+export function assertComponentReady(lifecycle) {
+  if (!lifecycle?.installed || !lifecycle?.setup || !lifecycle?.enabled) {
+    fail('COMPONENT_NOT_READY', 'Connections component is not enabled and ready');
+  }
+  return lifecycle;
+}
+
 export function assertConnectionUsable(connection, request) {
   if (!connection) fail('CONNECTION_NOT_FOUND', 'Connection does not exist');
   if (!connection.enabled) fail('CONNECTION_DISABLED', 'Connection is disabled');
@@ -30,7 +37,11 @@ export function assertConnectionUsable(connection, request) {
 }
 
 export function assertWithinUsageBudget(receipts, connection, limits, now = Date.now()) {
-  const relevant = receipts.filter((r) => r.connectionId === connection.id && r.attemptedExternal === true);
+  const relevant = receipts.filter((r) => {
+    if (r.connectionId !== connection.id) return false;
+    if (r.budgetReserved === true) return true;
+    return r.attemptedExternal === true && !r.budgetReservationId;
+  });
   const minute = relevant.filter((r) => now - Date.parse(r.timestamp) < 60_000).length;
   const day = relevant.filter((r) => now - Date.parse(r.timestamp) < 86_400_000).length;
   if (minute >= limits.maxCallsPerMinute) fail('RATE_LIMIT_EXCEEDED', 'Connection per-minute call budget exceeded');
