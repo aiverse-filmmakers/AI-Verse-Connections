@@ -1,3 +1,4 @@
+import { assertMcpCredentialOriginBinding } from './credential-origin.js';
 import { fail } from './errors.js';
 import { assertInstallationSystem } from './system-binding.js';
 import { nowIso, sha256 } from './util.js';
@@ -60,6 +61,7 @@ export async function reauth(id, credentialHandle) {
     const c = r.connections[id];
     if (!c) fail('CONNECTION_NOT_FOUND', `Connection ${id} not found`);
     assertInstallationSystem(lifecycle, c.systemId, { subject: `Connection ${id}` });
+    assertMcpCredentialOriginBinding(r, c, credentialHandle);
     c.credentialHandle = credentialHandle;
     c.status = { ...c.status, liveVerified: false, healthy: false, authorized: false, approved: false, lastError: null };
     c.reauthAt = nowIso();
