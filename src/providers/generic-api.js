@@ -6,7 +6,7 @@ import { assertGenericTargetPathAllowed, assertNormalizedPathAllowed, canonicali
 const HOP_BY_HOP = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'proxy-authorization', 'proxy-authenticate', 'upgrade']);
 
 export class GenericApiAdapter {
-  constructor(credentials) { this.credentials = credentials; }
+  constructor(credentials) { this.credentials = credentials; this.network = undefined; }
 
   validateConfig(connection) {
     const baseUrl = normalizeBaseUrl(connection.config.baseUrl);
@@ -56,7 +56,7 @@ export class GenericApiAdapter {
     if (!['HEAD', 'GET'].includes(healthMethod)) fail('INVALID_HEALTH_METHOD', 'Generic API health method must be HEAD or GET');
     const target = new URL(healthPath, `${baseUrl}/`);
     if (target.origin !== origin) fail('ORIGIN_MISMATCH', 'Health probe must remain on the registered origin');
-    const { response } = await boundedFetch(target.toString(), { method: healthMethod, headers: { ...authHeaders, Accept: 'application/json, text/plain;q=0.9, */*;q=0.1' } }, limits, origin);
+    const { response } = await boundedFetch(target.toString(), { method: healthMethod, headers: { ...authHeaders, Accept: 'application/json, text/plain;q=0.9, */*;q=0.1' } }, limits, origin, this.network);
     if (response.status === 401 || response.status === 403) fail('GENERIC_NOT_AUTHORIZED', `Generic API health probe rejected authorization with ${response.status}`);
     if (!response.ok) fail('GENERIC_HEALTH_FAILED', `Generic API health probe returned HTTP ${response.status}`);
     return { authorized: true, healthy: true, details: { mode: 'live-network-probe', status: response.status, method: healthMethod, path: healthPath } };
@@ -71,7 +71,7 @@ export class GenericApiAdapter {
       method: req.method,
       headers: { ...req.headers, ...authHeaders, Accept: 'application/json, text/plain;q=0.9, */*;q=0.1' },
       body: req.body
-    }, limits, req.origin);
+    }, limits, req.origin, this.network);
     const type = response.headers.get('content-type') || '';
     let data = buffer.toString('utf8');
     if (type.includes('application/json')) {
