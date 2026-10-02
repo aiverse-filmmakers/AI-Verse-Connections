@@ -1,4 +1,5 @@
 import { DEFAULT_LIMITS, MCP_PROTOCOL_VERSION } from './constants.js';
+import { assertMcpCredentialOriginBinding } from './credential-origin.js';
 import { fail } from './errors.js';
 import { effectiveLimits } from './policy.js';
 import { assertInstallationSystem } from './system-binding.js';
@@ -56,10 +57,7 @@ export async function addMcp(opts) {
     const lifecycle = await this.store.getLifecycle();
     assertInstallationSystem(lifecycle, connection.systemId, { subject: `Connection ${connection.id}` });
     if (r.connections[connection.id]) fail('CONNECTION_EXISTS', `Connection ${connection.id} already exists`);
-    if (connection.credentialHandle && connection.credentialHandle !== 'none') {
-      const reused = Object.values(r.connections).find((c) => c.provider === 'mcp' && c.credentialHandle === connection.credentialHandle && c.mcp?.origin && c.mcp.origin !== origin);
-      if (reused) fail('MCP_CREDENTIAL_REUSE_FORBIDDEN', 'The same MCP bearer credential handle cannot be reused across different server origins');
-    }
+    assertMcpCredentialOriginBinding(r, connection);
     r.connections[connection.id] = connection;
   });
   return connection;
@@ -96,7 +94,15 @@ export async function listConnections() {
 
 
 export async function verify(id) {
-  const initial = await this.getBoundConnection(id);
+  const initial = await this.store.withLock(async () => {
+    const lifecycle = await this.store.getLifecycle();
+    const registry = await this.store.getRegistry();
+    const connection = registry.connections[id];
+    if (!connection) fail('CONNECTION_NOT_FOUND', `Connection ${id} not found`);
+    assertInstallationSystem(lifecycle, connection.systemId, { subject: `Connection ${id}` });
+    assertMcpCredentialOriginBinding(registry, connection);
+    return structuredClone(connection);
+  });
   const adapter = this.adapters[initial.provider];
   if (!adapter) fail('PROVIDER_UNSUPPORTED', `Provider ${initial.provider} is unsupported`);
   let result;
