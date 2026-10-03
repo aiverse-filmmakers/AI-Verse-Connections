@@ -9,7 +9,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (!a.startsWith('--')) { positional.push(a); continue; }
     const key = a.slice(2);
-    if (['json', 'approve', 'purge', 'allow-private-network'].includes(key)) flags[key] = true;
+    if (['json', 'approve', 'purge', 'allow-private-network', 'confirm'].includes(key)) flags[key] = true;
     else flags[key] = argv[++i];
   }
   return { positional, flags };
@@ -70,6 +70,10 @@ export async function main(argv = process.argv.slice(2)) {
       else if (sub === 'approve') result = await service.approveConnection(p[2]);
       else if (sub === 'revoke') result = await service.revoke(p[2]);
       else if (sub === 'reauth') result = await service.reauth(p[2], f.credential);
+      else if (sub === 'reconcile') result = await service.reconcileExternalEffect(p[2], {
+        executionId: f['execution-id'], resolution: f.resolution, operatorConfirmed: bool(f.confirm),
+        note: f.note, actor: f.actor || 'cli-operator'
+      });
       else if (sub === 'execute') result = await service.execute(p[2], {
         capability: f.capability, systemId: f.system, workspaceId: f.workspace, actor: f.actor || 'cli',
         grantedCapabilities: split(f.grants || f.capability), idempotencyKey: f['idempotency-key'], approval: { approved: bool(f.approve) },
