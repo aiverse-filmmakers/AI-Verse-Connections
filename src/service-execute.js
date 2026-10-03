@@ -339,7 +339,8 @@ export async function execute(id, request) {
         providerEdgeEntered: true,
         attemptedExternal: true,
         budgetReservationId,
-        budgetState: 'unknown',
+        budgetState: 'terminal',
+        providerEffectState: 'unknown',
         errorCode: err.code || 'ERROR',
         trust: TRUST_LABEL
       };
