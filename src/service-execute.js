@@ -242,6 +242,7 @@ export async function execute(id, request) {
           budgetReservationId,
           attemptedExternal: false
         });
+        if (this.hooks.afterBudgetReservation) await this.hooks.afterBudgetReservation({ executionId, budgetReservationId });
         const edgeReceipt = {
           receiptId: randomId('cxu'),
           timestamp: nowIso(),
