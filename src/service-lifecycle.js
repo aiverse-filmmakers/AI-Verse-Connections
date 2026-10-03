@@ -5,6 +5,7 @@ import { COMPONENT_ID, VERSION } from './constants.js';
 import { fail } from './errors.js';
 import { installationSystemId } from './system-binding.js';
 import { nowIso } from './util.js';
+import { inspectExternalEffects } from './external-effect-state.js';
 
 export async function install() {
   await this.store.claimHome();
@@ -120,6 +121,17 @@ export async function doctor() {
   const checks = [];
   const writeLock = await this.store.inspectWriteLock();
   checks.push({ depth: 'structural', name: 'write-lock', ok: writeLock.ok, detail: writeLock });
+  const externalEffects = inspectExternalEffects(await this.store.readReceipts());
+  checks.push({
+    depth: 'state-lock',
+    name: 'external-effect-recovery',
+    ok: externalEffects.unresolved.length === 0,
+    detail: {
+      unresolved: externalEffects.unresolved,
+      abandonedBeforeProvider: externalEffects.abandonedBeforeEdge.length,
+      inProgress: externalEffects.inProgress.length
+    }
+  });
   checks.push({ depth: 'structural', name: 'installed-state', ok: status.lifecycle.installed });
   checks.push({ depth: 'attachment/discovery', name: 'setup', ok: status.lifecycle.setup, detail: status.lifecycle.systemId });
   const registry = await this.store.getRegistry();
