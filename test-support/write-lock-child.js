@@ -10,6 +10,19 @@ if (mode === 'hold') {
     process.send?.({ type: 'acquired', pid: process.pid });
     await new Promise((resolve) => process.once('message', resolve));
   });
+} else if (mode === 'reserve-crash') {
+  await store.withLock(async () => {
+    await store.appendReceipt({
+      receiptId: 'crash-reservation',
+      timestamp: new Date().toISOString(),
+      connectionId: 'crash-test',
+      capability: 'crash.test',
+      idempotencyKey: 'crash-reservation-key',
+      outcome: 'pending',
+      attemptedExternal: false
+    });
+    process.exit(0);
+  });
 } else if (mode === 'bump') {
   await new Promise((resolve) => process.once('message', resolve));
   await store.withLock(async () => {
