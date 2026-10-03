@@ -118,6 +118,8 @@ export async function status() {
 export async function doctor() {
   const status = await this.status();
   const checks = [];
+  const writeLock = await this.store.inspectWriteLock();
+  checks.push({ depth: 'structural', name: 'write-lock', ok: writeLock.ok, detail: writeLock });
   checks.push({ depth: 'structural', name: 'installed-state', ok: status.lifecycle.installed });
   checks.push({ depth: 'attachment/discovery', name: 'setup', ok: status.lifecycle.setup, detail: status.lifecycle.systemId });
   const registry = await this.store.getRegistry();
