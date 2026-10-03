@@ -22,9 +22,19 @@ test('idempotency reservation prevents concurrent duplicate side effects and rep
   const req = {
     capability: cap, systemId: 'sys-a', workspaceId: 'ws-a', grantedCapabilities: [cap], idempotencyKey: 'same-key', input: { method: 'POST', path: '/v1/slow' }
   };
+  let releaseFirst;
+  let reachedFinalEdge;
+  const firstAtFinalEdge = new Promise((resolve) => { reachedFinalEdge = resolve; });
+  const firstCanContinue = new Promise((resolve) => { releaseFirst = resolve; });
+  service.hooks.beforeFinalEdge = async () => {
+    reachedFinalEdge();
+    await firstCanContinue;
+  };
+
   const first = service.execute('idem', req);
-  await new Promise((r) => setTimeout(r, 20));
+  await firstAtFinalEdge;
   await expectCode(service.execute('idem', req), 'IDEMPOTENCY_IN_PROGRESS');
+  releaseFirst();
   const done = await first;
   assert.equal(done.deduplicated, false);
   const replay = await service.execute('idem', req);

@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { COMPONENT_ID, STATE_SCHEMA_VERSION } from './constants.js';
@@ -15,6 +16,7 @@ const OWNED_ENTRIES = new Set([
   'credentials.enc.json',
   'receipts.ndjson',
   '.write.lock',
+  '.write.lock.reclaim',
   OWNERSHIP_FILENAME
 ]);
 const ATOMIC_JSON_FILES = ['lifecycle.json', 'registry.json', 'credentials.enc.json'];
@@ -78,7 +80,7 @@ function isOwnedTempEntry(name) {
 }
 
 function isKnownOwnedEntry(name) {
-  return OWNED_ENTRIES.has(name) || isOwnedTempEntry(name);
+  return OWNED_ENTRIES.has(name) || name.startsWith('.write.lock.stale.') || (name.startsWith('.write.lock.') && name.endsWith('.tmp')) || isOwnedTempEntry(name);
 }
 
 async function removeKnownEntry(fullPath) {
@@ -89,6 +91,39 @@ async function removeKnownEntry(fullPath) {
     return;
   }
   await fs.rm(fullPath, { recursive: true, force: true });
+}
+
+const LOCK_SCHEMA_VERSION = 1;
+const LOCK_RECOVERY_SUFFIX = '.reclaim';
+
+async function processLiveness(pid) {
+  if (!Number.isSafeInteger(pid) || pid < 1) return 'unknown';
+  try { process.kill(pid, 0); return 'live'; }
+  catch (err) {
+    if (err.code === 'ESRCH') return 'dead';
+    if (err.code === 'EPERM') return 'live';
+    return 'unknown';
+  }
+}
+
+async function readLockRecord(lockPath) {
+  let stat;
+  try { stat = await fs.lstat(lockPath); }
+  catch (err) { if (err.code === 'ENOENT') return { state: 'clear', ok: true }; throw err; }
+  if (stat.isSymbolicLink()) return { state: 'invalid', ok: false, reason: 'symlink' };
+  if (stat.isDirectory()) return { state: 'legacy-unverifiable', ok: false, reason: 'legacy-directory-lock' };
+  if (!stat.isFile()) return { state: 'invalid', ok: false, reason: 'not-a-regular-file' };
+  let owner;
+  try { owner = JSON.parse(await fs.readFile(lockPath, 'utf8')); }
+  catch (err) { if (err.code === 'ENOENT') return { state: 'clear', ok: true }; return { state: 'unverifiable', ok: false, reason: 'malformed-holder-record' }; }
+  if (owner.schemaVersion !== LOCK_SCHEMA_VERSION || typeof owner.token !== 'string' || !owner.token || !Number.isSafeInteger(owner.pid) || owner.pid < 1 || typeof owner.hostname !== 'string' || !owner.hostname) {
+    return { state: 'unverifiable', ok: false, reason: 'invalid-holder-record' };
+  }
+  if (owner.hostname !== os.hostname()) return { state: 'foreign-host', ok: false, owner };
+  const liveness = await processLiveness(owner.pid);
+  if (liveness === 'dead') return { state: 'stale-holder', ok: false, owner };
+  if (liveness !== 'live') return { state: 'unverifiable', ok: false, owner, reason: 'process-liveness-unknown' };
+  return { state: 'held', ok: true, owner };
 }
 
 export function defaultHome() {
@@ -224,23 +259,96 @@ export class StateStore {
     await fs.rename(tmp, file);
   }
 
+  async inspectWriteLock() {
+    const { realHome } = await this.inspectHome({ allowMissing: true });
+    if (!realHome) return { state: 'clear', ok: true };
+    const recovery = await readLockRecord(this.lockPath + LOCK_RECOVERY_SUFFIX);
+    if (recovery.state !== 'clear') return { state: recovery.state === 'held' ? 'recovery-in-progress' : 'recovery-lock-unverifiable', ok: recovery.state === 'held', recovery };
+    return readLockRecord(this.lockPath);
+  }
+
+  async createLockRecord(filePath, owner) {
+    const tmp = filePath + '.' + process.pid + '.' + owner.token + '.tmp';
+    let handle;
+    try {
+      handle = await fs.open(tmp, 'wx', 0o600);
+      await handle.writeFile(JSON.stringify(owner) + '\n');
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      await fs.link(tmp, filePath);
+      return true;
+    } catch (err) { if (err.code === 'EEXIST') return false; throw err; }
+    finally { await handle?.close().catch(() => {}); await fs.rm(tmp, { force: true }).catch(() => {}); }
+  }
+
+  async releaseLockRecord(filePath, token) {
+    const state = await readLockRecord(filePath);
+    if (state.state === 'clear') return;
+    if (state.owner?.token === token) await fs.unlink(filePath).catch((err) => { if (err.code !== 'ENOENT') throw err; });
+  }
+
+  async reclaimStaleLock(expectedToken) {
+    const recoveryPath = this.lockPath + LOCK_RECOVERY_SUFFIX;
+    const gate = { schemaVersion: LOCK_SCHEMA_VERSION, purpose: 'stale-lock-recovery', token: crypto.randomUUID(), pid: process.pid, hostname: os.hostname(), acquiredAt: nowIso() };
+    const claimed = await this.createLockRecord(recoveryPath, gate);
+    if (!claimed) {
+      const recovery = await readLockRecord(recoveryPath);
+      if (recovery.state === 'stale-holder') {
+        fail('STATE_LOCK_RECOVERY_REQUIRED', 'A prior stale-lock recovery was interrupted; inspect doctor and safely clear its dead recovery holder', {
+          pid: recovery.owner.pid,
+          hostname: recovery.owner.hostname
+        });
+      }
+      if (['legacy-unverifiable', 'invalid', 'unverifiable', 'foreign-host'].includes(recovery.state)) {
+        fail('STATE_LOCK_RECOVERY_REQUIRED', 'Connections state lock recovery holder cannot be verified', {
+          state: recovery.state,
+          reason: recovery.reason || null,
+          pid: recovery.owner?.pid || null,
+          hostname: recovery.owner?.hostname || null
+        });
+      }
+      return false;
+    }
+    try {
+      const current = await readLockRecord(this.lockPath);
+      if (current.state !== 'stale-holder' || current.owner.token !== expectedToken) return false;
+      const quarantine = this.lockPath + '.stale.' + expectedToken;
+      try { await fs.rename(this.lockPath, quarantine); }
+      catch (err) { if (['ENOENT', 'EEXIST'].includes(err.code)) return false; throw err; }
+      const moved = await readLockRecord(quarantine);
+      if (moved.owner?.token !== expectedToken || moved.state !== 'stale-holder') {
+        // The recovery claim prevents another reclaimer from racing this check.
+        const restored = moved.owner && await this.createLockRecord(this.lockPath, moved.owner);
+        if (restored) await fs.rm(quarantine, { force: true });
+        return false;
+      }
+      await fs.unlink(quarantine);
+      return true;
+    } finally { await this.releaseLockRecord(recoveryPath, gate.token); }
+  }
+
   async withLock(fn, { timeoutMs = 5000 } = {}) {
     await this.ensureHome();
     const started = Date.now();
+    const owner = { schemaVersion: LOCK_SCHEMA_VERSION, token: crypto.randomUUID(), pid: process.pid, hostname: os.hostname(), acquiredAt: nowIso() };
     while (true) {
-      try {
-        await fs.mkdir(this.lockPath);
-        break;
-      } catch (err) {
-        if (err.code !== 'EEXIST') throw err;
-        if (Date.now() - started > timeoutMs) fail('STATE_LOCK_TIMEOUT', 'Timed out waiting for Connections state lock');
-        await sleep(25);
+      const health = await readLockRecord(this.lockPath);
+      if (health.state === 'clear') {
+        const recovery = await readLockRecord(this.lockPath + LOCK_RECOVERY_SUFFIX);
+        if (recovery.state === 'clear') { if (await this.createLockRecord(this.lockPath, owner)) break; continue; }
+        if (recovery.state !== 'held') fail('STATE_LOCK_RECOVERY_REQUIRED', 'Connections state lock recovery is itself incomplete or unverifiable', { state: recovery.state, reason: recovery.reason || null });
+      } else if (health.state === 'stale-holder') {
+        await this.reclaimStaleLock(health.owner.token);
+      } else if (['legacy-unverifiable', 'invalid', 'unverifiable', 'foreign-host'].includes(health.state)) {
+        fail('STATE_LOCK_UNRECOVERABLE', 'Connections state lock holder cannot be safely verified; inspect doctor before removing it', { state: health.state, reason: health.reason || null, hostname: health.owner?.hostname || null, pid: health.owner?.pid || null });
       }
+      if (Date.now() - started > timeoutMs) fail('STATE_LOCK_TIMEOUT', 'Timed out waiting for Connections state lock', { state: health.state });
+      await sleep(25);
     }
     try { return await fn(); }
-    finally { await fs.rm(this.lockPath, { recursive: true, force: true }); }
+    finally { await this.releaseLockRecord(this.lockPath, owner.token); }
   }
-
   async getLifecycle() {
     return this.readJson(this.lifecyclePath, {
       schemaVersion: STATE_SCHEMA_VERSION,
