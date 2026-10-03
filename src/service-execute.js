@@ -142,10 +142,9 @@ async function reserveExecution(service, id, request, executionId, owner) {
       }
     } else {
       const unresolved = all.findLast((r) => r.connectionId === id && r.capability === request.capability
-        && (r.outcome === 'external-unknown' || (r.outcome === 'failure' && r.attemptedExternal === true))
-        && r.executionActive !== false);
+        && (r.outcome === 'external-unknown' || (r.outcome === 'failure' && r.attemptedExternal === true)));
       if (unresolved) {
-        const liveness = executionOwnerLiveness(unresolved.executionOwner);
+        const liveness = unresolved.executionActive === false ? 'dead' : executionOwnerLiveness(unresolved.executionOwner);
         if (liveness === 'live') return { pending: unresolved };
         return { unknown: unresolved.outcome === 'external-unknown' ? unresolved : await recordRecoveredUnknown(service.store, id, request, unresolved.executionId || randomId('cxe'), unresolved.executionOwner, unresolved) };
       }
@@ -166,8 +165,8 @@ async function reserveExecution(service, id, request, executionId, owner) {
       outcome: 'pending',
       attemptedExternal: false
     };
-    markExecutionActive(executionId);
     await service.store.appendReceipt(hold);
+    markExecutionActive(executionId);
     return { hold };
   });
 }
