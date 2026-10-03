@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ConnectionsService } from '../src/service.js';
 import { StateStore } from '../src/state-store.js';
+import { startServer, readyService, approveGeneric } from '../test-support/helpers.js';
 import { tmpHome, expectCode } from '../test-support/helpers.js';
 
 const childPath = fileURLToPath(new URL('../test-support/write-lock-child.js', import.meta.url));
@@ -113,4 +114,79 @@ test('unidentifiable legacy directory lock is surfaced and fails closed', async 
   assert.equal(lockCheck.detail.state, 'legacy-unverifiable');
   await expectCode(service.store.withLock(() => {}), 'STATE_LOCK_UNRECOVERABLE');
   assert.equal((await fs.stat(path.join(home, '.write.lock'))).isDirectory(), true);
+});
+
+test('crash after idempotency reservation allows safe terminal receipt publication after recovery', async () => {
+  const home = await tmpHome();
+  const service = new ConnectionsService({ home, env: {} });
+  await service.install();
+  await service.setup({ systemId: 'sys-reservation' });
+
+  const child = startChild(home, 'reserve-crash');
+  await waitForExit(child);
+  assert.equal((await service.store.inspectWriteLock()).state, 'stale-holder');
+
+  await service.store.withLock(async () => {
+    await service.store.appendReceipt({
+      receiptId: 'crash-terminal',
+      timestamp: new Date().toISOString(),
+      connectionId: 'crash-test',
+      capability: 'crash.test',
+      idempotencyKey: 'crash-reservation-key',
+      outcome: 'failure',
+      attemptedExternal: false,
+      preProvider: true,
+      errorCode: 'RECOVERED_PRE_PROVIDER'
+    });
+  });
+
+  const matching = (await service.store.readReceipts()).filter((receipt) => receipt.idempotencyKey === 'crash-reservation-key');
+  assert.deepEqual(matching.map((receipt) => receipt.outcome), ['pending', 'failure']);
+  assert.equal((await service.store.inspectWriteLock()).state, 'clear');
+});
+
+test('external execution commits its terminal receipt after a crashed concurrent lock holder', async (t) => {
+  let calls = 0;
+  const server = await startServer((req, res) => {
+    if (req.url === '/health' && req.method === 'HEAD') return res.writeHead(204).end();
+    if (req.url === '/v1/x' && req.method === 'GET') {
+      calls++;
+      return res.end(JSON.stringify({ ok: true }));
+    }
+    return res.writeHead(404).end();
+  });
+  t.after(server.close);
+
+  const home = await tmpHome();
+  const service = await readyService(home);
+  const capability = await approveGeneric(service, 'receipt-recovery', { baseUrl: server.url, risk: 'read' });
+  const adapter = service.adapters['generic-api'];
+  const execute = adapter.execute.bind(adapter);
+
+  adapter.execute = async (...args) => {
+    const result = await execute(...args);
+    const holder = startChild(home, 'hold');
+    await waitForMessage(holder, 'acquired');
+    holder.kill();
+    await waitForExit(holder);
+    return result;
+  };
+
+  const result = await service.execute('receipt-recovery', {
+    capability,
+    systemId: 'sys-a',
+    workspaceId: 'ws-a',
+    grantedCapabilities: [capability],
+    input: { method: 'GET', path: '/v1/x' }
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(result.receipt.outcome, 'success');
+  assert.equal(result.receipt.attemptedExternal, true);
+  const receipts = await service.store.readReceipts();
+  assert.equal(receipts.filter((receipt) => receipt.outcome === 'success' && receipt.connectionId === 'receipt-recovery').length, 1);
+  const reservations = receipts.filter((receipt) => receipt.budgetReserved);
+  assert.equal(reservations.length, 1);
+  assert.equal(receipts.filter((receipt) => receipt.budgetReservationId === reservations[0].budgetReservationId && receipt.budgetState === 'terminal').length, 1);
+  assert.equal((await service.store.inspectWriteLock()).state, 'clear');
 });
