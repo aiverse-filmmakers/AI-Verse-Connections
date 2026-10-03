@@ -23,7 +23,7 @@ export function executionOwnerLiveness(owner) {
 }
 
 const TERMINAL = new Set([
-  'success', 'provider-error', 'pre-provider-failure',
+  'success', 'provider-error', 'failure', 'pre-provider-failure',
   'abandoned-pre-provider', 'external-reconciled-applied',
   'external-reconciled-not-applied'
 ]);
