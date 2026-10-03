@@ -3,7 +3,7 @@ import { assertComponentReady, assertConnectionUsable, assertWithinUsageBudget, 
 import { fail } from './errors.js';
 import { assertInstallationSystem } from './system-binding.js';
 import { nowIso, randomId } from './util.js';
-import { executionOwnerLiveness, makeExecutionOwner, markExecutionActive, markExecutionInactive } from './external-effect-state.js';
+import { executionOwnerLiveness, inspectExternalEffects, makeExecutionOwner, markExecutionActive, markExecutionInactive } from './external-effect-state.js';
 
 function idempotencyMatch(receipt, id, request) {
   return receipt.connectionId === id
@@ -51,7 +51,7 @@ async function terminalizePreProviderFailure(service, id, request, executionId, 
       executionId,
       executionOwner: owner,
       executionActive: false,
-      outcome: 'pre-provider-failure',
+      outcome: 'failure',
       attemptedExternal: false,
       errorCode: err.code || 'ERROR',
       preProvider: true,
@@ -141,13 +141,11 @@ async function reserveExecution(service, id, request, executionId, owner) {
         return { unknown: await recordRecoveredUnknown(service.store, id, request, latest.executionId || randomId('cxe'), latest.executionOwner, latest) };
       }
     } else {
-      const unresolved = all.findLast((r) => r.connectionId === id && r.capability === request.capability
-        && (r.outcome === 'external-unknown' || (r.outcome === 'failure' && r.attemptedExternal === true)));
-      if (unresolved) {
-        const liveness = unresolved.executionActive === false ? 'dead' : executionOwnerLiveness(unresolved.executionOwner);
-        if (liveness === 'live') return { pending: unresolved };
-        return { unknown: unresolved.outcome === 'external-unknown' ? unresolved : await recordRecoveredUnknown(service.store, id, request, unresolved.executionId || randomId('cxe'), unresolved.executionOwner, unresolved) };
-      }
+      const effectState = inspectExternalEffects(all);
+      const pending = effectState.inProgress.find((r) => r.connectionId === id && r.capability === request.capability);
+      if (pending) return { pending };
+      const unresolved = effectState.unresolved.find((r) => r.connectionId === id && r.capability === request.capability);
+      if (unresolved) return { unknown: unresolved };
     }
 
     const hold = {
@@ -341,6 +339,7 @@ export async function execute(id, request) {
         providerEdgeEntered: true,
         attemptedExternal: true,
         budgetReservationId,
+        budgetState: 'unknown',
         errorCode: err.code || 'ERROR',
         trust: TRUST_LABEL
       };
