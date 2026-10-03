@@ -19,6 +19,12 @@ if (mode === 'before-provider') {
     await new Promise((resolve) => process.once('message', resolve));
     process.exit(97);
   };
+} else if (mode === 'after-budget-reservation') {
+  service.hooks.afterBudgetReservation = async ({ executionId }) => {
+    process.send?.({ type: 'budget-reserved', executionId });
+    await new Promise((resolve) => process.once('message', resolve));
+    process.exit(97);
+  };
 } else if (mode === 'after-edge') {
   service.hooks.afterProviderEdge = async ({ executionId }) => {
     process.send?.({ type: 'edge', executionId }, () => process.exit(97));
