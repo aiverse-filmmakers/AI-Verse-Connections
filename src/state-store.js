@@ -291,7 +291,24 @@ export class StateStore {
     const recoveryPath = this.lockPath + LOCK_RECOVERY_SUFFIX;
     const gate = { schemaVersion: LOCK_SCHEMA_VERSION, purpose: 'stale-lock-recovery', token: crypto.randomUUID(), pid: process.pid, hostname: os.hostname(), acquiredAt: nowIso() };
     const claimed = await this.createLockRecord(recoveryPath, gate);
-    if (!claimed) return false;
+    if (!claimed) {
+      const recovery = await readLockRecord(recoveryPath);
+      if (recovery.state === 'stale-holder') {
+        fail('STATE_LOCK_RECOVERY_REQUIRED', 'A prior stale-lock recovery was interrupted; inspect doctor and safely clear its dead recovery holder', {
+          pid: recovery.owner.pid,
+          hostname: recovery.owner.hostname
+        });
+      }
+      if (['legacy-unverifiable', 'invalid', 'unverifiable', 'foreign-host'].includes(recovery.state)) {
+        fail('STATE_LOCK_RECOVERY_REQUIRED', 'Connections state lock recovery holder cannot be verified', {
+          state: recovery.state,
+          reason: recovery.reason || null,
+          pid: recovery.owner?.pid || null,
+          hostname: recovery.owner?.hostname || null
+        });
+      }
+      return false;
+    }
     try {
       const current = await readLockRecord(this.lockPath);
       if (current.state !== 'stale-holder' || current.owner.token !== expectedToken) return false;
