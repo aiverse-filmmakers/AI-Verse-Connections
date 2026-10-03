@@ -137,7 +137,7 @@ export async function doctor() {
     checks.push({ depth: 'operational', connectionId: c.id, name: 'connection-health', ok: !!c.status?.healthy && !!c.status?.authorized, error: c.status?.lastError || null });
   }
   const ok = checks.every((c) => c.ok) && status.state === 'ready';
-  return { ...status, doctor: { ok, depthChecked: ['structural', 'attachment/discovery', 'runtime', 'dependency', 'operational'], checks } };
+  return { ...status, doctor: { ok, depthChecked: ['structural', 'state-lock', 'attachment/discovery', 'runtime', 'dependency', 'operational'], checks } };
 }
 
 
