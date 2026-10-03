@@ -49,7 +49,7 @@ export function inspectExternalEffects(receipts) {
     if (TERMINAL.has(latest.outcome) && !(latest.outcome === 'failure' && latest.attemptedExternal === true)) continue;
     const edgeEntered = history.some((r) => r.providerEdgeEntered === true || r.outcome === 'external-unknown' || (r.outcome === 'failure' && r.attemptedExternal === true));
     const holder = latest.executionOwner || history.find((r) => r.executionOwner)?.executionOwner;
-    const liveness = executionOwnerLiveness(holder);
+    const liveness = latest.executionActive === false ? 'dead' : executionOwnerLiveness(holder);
     const item = { executionId, receiptId: latest.receiptId, connectionId: latest.connectionId, capability: latest.capability, state: edgeEntered ? 'external-unknown' : 'abandoned-before-provider', liveness };
     if (liveness === 'live') inProgress.push(item);
     else if (edgeEntered || liveness !== 'dead') unresolved.push(item);
