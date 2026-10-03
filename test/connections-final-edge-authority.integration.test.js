@@ -199,7 +199,9 @@ test('WSA-2026-032 terminalizes a provider-edge budget reservation when the adap
     r.budgetReservationId === reservation.budgetReservationId
     && r.budgetState === 'terminal'
   );
-  assert.equal(terminal?.outcome, 'failure');
+  assert.equal(terminal?.outcome, 'external-unknown');
+  assert.equal(terminal?.budgetState, 'terminal');
+  assert.equal(terminal?.providerEffectState, 'unknown');
   assert.equal(terminal?.errorCode, 'TEST_PROVIDER_FAILURE');
   assert.equal(terminal?.attemptedExternal, true);
 

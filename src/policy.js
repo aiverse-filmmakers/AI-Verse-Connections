@@ -37,9 +37,12 @@ export function assertConnectionUsable(connection, request) {
 }
 
 export function assertWithinUsageBudget(receipts, connection, limits, now = Date.now()) {
+  const releasedReservations = new Set(receipts.filter((r) => r.outcome === 'budget-released').map((r) => r.budgetReservationId).filter(Boolean));
+  const provenNoEffect = new Set(receipts.filter((r) => ['abandoned-pre-provider', 'external-reconciled-not-applied'].includes(r.outcome)).map((r) => r.executionId).filter(Boolean));
   const relevant = receipts.filter((r) => {
     if (r.connectionId !== connection.id) return false;
-    if (r.budgetReserved === true) return true;
+    if (r.executionId && provenNoEffect.has(r.executionId)) return false;
+    if (r.budgetReserved === true) return !releasedReservations.has(r.budgetReservationId);
     return r.attemptedExternal === true && !r.budgetReservationId;
   });
   const minute = relevant.filter((r) => now - Date.parse(r.timestamp) < 60_000).length;

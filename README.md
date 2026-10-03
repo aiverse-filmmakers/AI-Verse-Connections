@@ -330,3 +330,17 @@ Integration tests exercise real local HTTP boundaries for generic API and MCP pa
 ## Architecture history
 
 The repository began as a founding architecture/research seed. That original design remains preserved in Git history. `0.1.0-beta.1` is the first executable Connections implementation derived from that architecture and the current public-beta contracts.
+
+
+## Recovering an interrupted provider execution
+
+A crash after the durable provider-edge marker leaves the effect outcome unknown. Connections blocks replay of the same idempotency key, counts the attempt against the usage budget, and reports the execution ID under `doctor`'s `external-effect-recovery` check. Do not retry or reconcile until the provider-side outcome has been checked.
+
+A local operator can record the checked outcome explicitly:
+
+```sh
+aiverse-connections doctor --json
+aiverse-connections connection reconcile <connection-id> --execution-id <execution-id> --resolution applied --confirm --note "Provider confirms the request was applied"
+```
+
+Use `--resolution not-applied` only after confirming the provider did not apply the request; that resolution releases the unused budget reservation and permits the same idempotency key to be retried. `applied` records the effect as reconciled and keeps that key fenced from replay. The confirmation and note are persisted in the receipt log. Keep the note factual and free of credentials or other secrets. Reconciliation is a local operator action, not an automatic provider retry.
