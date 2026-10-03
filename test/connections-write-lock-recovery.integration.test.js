@@ -149,7 +149,7 @@ test('external execution commits its terminal receipt after a crashed concurrent
   let calls = 0;
   const server = await startServer((req, res) => {
     if (req.url === '/health' && req.method === 'HEAD') return res.writeHead(204).end();
-    if (req.url === '/v1/x' && req.method === 'GET') {
+    if (req.url === '/v1/x' && req.method === 'POST') {
       calls++;
       return res.end(JSON.stringify({ ok: true }));
     }
@@ -177,7 +177,7 @@ test('external execution commits its terminal receipt after a crashed concurrent
     systemId: 'sys-a',
     workspaceId: 'ws-a',
     grantedCapabilities: [capability],
-    input: { method: 'GET', path: '/v1/x' }
+    input: { method: 'POST', path: '/v1/x' }
   });
 
   assert.equal(calls, 1);
