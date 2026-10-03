@@ -181,10 +181,6 @@ export async function execute(id, request) {
 
     const initial = await this.getBoundConnection(id);
     const initialCap = assertConnectionUsable(initial, request);
-    const limits = effectiveLimits(initial);
-    const receipts = await this.store.readReceipts();
-    assertWithinUsageBudget(receipts, initial, limits);
-
     const reservationResult = await reserveExecution(this, id, request, executionId, owner);
     if (reservationResult.hold) active = true;
     if (reservationResult.terminal) {
