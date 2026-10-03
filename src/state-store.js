@@ -16,6 +16,7 @@ const OWNED_ENTRIES = new Set([
   'credentials.enc.json',
   'receipts.ndjson',
   '.write.lock',
+  '.write.lock.reclaim',
   OWNERSHIP_FILENAME
 ]);
 const ATOMIC_JSON_FILES = ['lifecycle.json', 'registry.json', 'credentials.enc.json'];
@@ -79,7 +80,7 @@ function isOwnedTempEntry(name) {
 }
 
 function isKnownOwnedEntry(name) {
-  return OWNED_ENTRIES.has(name) || name.startsWith('.write.lock.stale.') || name.startsWith('.write.lock.reclaim.') || isOwnedTempEntry(name);
+  return OWNED_ENTRIES.has(name) || name.startsWith('.write.lock.stale.') || (name.startsWith('.write.lock.') && name.endsWith('.tmp')) || isOwnedTempEntry(name);
 }
 
 async function removeKnownEntry(fullPath) {
