@@ -76,7 +76,10 @@ export class McpAdapter {
     try { payload = JSON.parse(buffer.toString('utf8')); }
     catch { fail('MCP_INVALID_JSON', 'MCP server returned invalid JSON'); }
     if (payload.id !== id) fail('MCP_ID_MISMATCH', 'MCP response id did not match request');
-    if (payload.error) fail('MCP_RPC_ERROR', payload.error.message || 'MCP RPC error', { rpc: payload.error });
+    if (payload.error) {
+      const providerCode = Number.isSafeInteger(payload.error.code) ? payload.error.code : null;
+      fail('MCP_RPC_ERROR', 'MCP provider returned an RPC error', { providerCode });
+    }
     return { result: payload.result || {}, meta: payload.result?._meta || payload._meta || {} };
   }
 
