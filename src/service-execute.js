@@ -101,7 +101,7 @@ async function reserveExecution(service, id, request, executionId, owner) {
   return service.store.withLock(async () => {
     const all = request.idempotencyKey
       ? await service.store.idempotencyHistory({ connectionId: id, capability: request.capability, idempotencyKey: request.idempotencyKey })
-      : await service.store.unresolvedReceipts(id);
+      : await service.store.unresolvedReceipts(id, request.capability);
     if (request.idempotencyKey) {
       const prior = all.filter((r) => idempotencyMatch(r, id, request));
       const latest = prior.at(-1);
