@@ -95,40 +95,41 @@ export class ReceiptIndex {
       fs.mkdir(this.budgetDir, { recursive: true, mode: 0o700 }),
       fs.mkdir(this.unresolvedDir, { recursive: true, mode: 0o700 })
     ]);
-    let raw;
-    try { raw = await fs.readFile(this.receiptsPath); }
-    catch (err) { if (err.code === 'ENOENT') raw = Buffer.alloc(0); else throw err; }
     let offset = 0;
-    const executions = new Map();
-    const lines = raw.toString('utf8').split('\n');
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i];
-      const lineBytes = Buffer.byteLength(line, 'utf8');
-      if (line.trim()) {
-        let receipt;
-        try { receipt = JSON.parse(line); }
-        catch {
-          await this.failCorrupt('Connections receipt log contains malformed data; history was preserved and external execution is blocked', {
-            line: i + 1, byteOffset: offset, validReceiptCount: i
-          });
-        }
-        await this.indexReceipt(receipt, false);
-        if (receipt.executionId) {
-          const prior = executions.get(receipt.executionId) || { edgeEntered: false, latest: null };
-          prior.edgeEntered = prior.edgeEntered || receipt.providerEdgeEntered === true || receipt.outcome === 'external-unknown' || (receipt.outcome === 'failure' && receipt.attemptedExternal === true);
-          prior.latest = receipt;
-          executions.set(receipt.executionId, prior);
-          if (isTerminal(receipt)) executions.delete(receipt.executionId);
-        }
+    let lineNumber = 0;
+    const processLine = async (line) => {
+      lineNumber += 1;
+      if (!line.toString('utf8').trim()) return;
+      let receipt;
+      try { receipt = JSON.parse(line.toString('utf8')); }
+      catch {
+        await this.failCorrupt('Connections receipt log contains malformed data; history was preserved and external execution is blocked', {
+          line: lineNumber, byteOffset: offset, validReceiptCount: lineNumber - 1
+        });
       }
-      offset += lineBytes + (i < lines.length - 1 ? 1 : 0);
-    }
-    for (const [executionId, record] of executions) {
-      if (!record.latest.connectionId) continue;
-      await this.writeUnresolved(record.latest, record.edgeEntered);
-    }
+      await this.indexReceipt(receipt, false);
+    };
     const stat = await this.logStat();
-    await this.writeMeta(stat?.size || 0, stat);
+    if (stat) {
+      let pending = Buffer.alloc(0);
+      for await (const data of fs.createReadStream(this.receiptsPath)) {
+        const chunk = Buffer.concat([pending, data]);
+        let start = 0;
+        for (let i = 0; i < chunk.length; i += 1) {
+          if (chunk[i] !== 10) continue;
+          const line = chunk.subarray(start, i);
+          await processLine(line);
+          offset += line.length + 1;
+          start = i + 1;
+        }
+        pending = chunk.subarray(start);
+      }
+      if (pending.length) {
+        await processLine(pending);
+        offset += pending.length;
+      }
+    }
+    await this.writeMeta(offset, await this.logStat());
   }
 
   async writeMeta(offset, stat) {
