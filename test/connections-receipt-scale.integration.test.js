@@ -31,6 +31,12 @@ test('receipt indexes recover an appended ledger tail and keep idempotency and r
   assert.deepEqual((await service.store.budgetReceipts('api')).map((receipt) => receipt.receiptId), [crashedWriterRecord.receiptId]);
   assert.equal((await service.store.readReceipts()).length, 3);
 
+  const bucketDir = path.join(home, '.receipt-index', 'idempotency');
+  const bucket = (await fs.readdir(bucketDir))[0];
+  await fs.rm(path.join(bucketDir, bucket));
+  assert.deepEqual((await service.store.idempotencyHistory(key)).map((receipt) => receipt.receiptId), [first.receiptId, crashedWriterRecord.receiptId]);
+  assert.equal((await service.store.readReceipts()).length, 3);
+
   await fs.rm(path.join(home, '.receipt-index'), { recursive: true, force: true });
   assert.equal((await service.store.findIdempotentReceipt({ ...key, outcomes: ['success'] })).receiptId, crashedWriterRecord.receiptId);
   assert.equal((await service.store.readReceipts()).length, 3);
