@@ -35,7 +35,7 @@ async function releaseBudgetReservation(store, receipt, resolution = 'not-attemp
 
 async function terminalizePreProviderFailure(service, id, request, executionId, owner, err) {
   await service.store.withLock(async () => {
-    const history = executionHistory(await service.store.readReceipts(), executionId);
+    const history = await service.store.executionHistory(executionId);
     if (history.some((r) => r.providerEdgeEntered === true || r.outcome === 'external-unknown')) return;
     const reservation = history.findLast((r) => r.budgetReserved === true && r.budgetReservationId);
     await releaseBudgetReservation(service.store, reservation, 'pre-provider-failure');
@@ -99,7 +99,9 @@ async function recordRecoveredUnknown(store, id, request, executionId, owner, la
 
 async function reserveExecution(service, id, request, executionId, owner) {
   return service.store.withLock(async () => {
-    const all = await service.store.readReceipts();
+    const all = request.idempotencyKey
+      ? await service.store.idempotencyHistory({ connectionId: id, capability: request.capability, idempotencyKey: request.idempotencyKey })
+      : await service.store.unresolvedReceipts(id);
     if (request.idempotencyKey) {
       const prior = all.filter((r) => idempotencyMatch(r, id, request));
       const latest = prior.at(-1);
@@ -111,7 +113,7 @@ async function reserveExecution(service, id, request, executionId, owner) {
         // The previous operation was proven not to have crossed the provider edge.
       } else if (latest && ['pending', 'budget-reserved', 'external-unknown'].includes(latest.outcome)) {
         const currentExecutionId = latest.executionId || prior.findLast((r) => r.executionId)?.executionId;
-        const history = currentExecutionId ? executionHistory(all, currentExecutionId) : prior;
+        const history = currentExecutionId ? await service.store.executionHistory(currentExecutionId) : prior;
         const currentOwner = latest.executionOwner || history.findLast((r) => r.executionOwner)?.executionOwner;
         const crossedEdge = history.some((r) => r.providerEdgeEntered === true || r.outcome === 'external-unknown');
         const liveness = latest.executionActive === false ? 'dead' : executionOwnerLiveness(currentOwner);
@@ -217,7 +219,7 @@ export async function execute(id, request) {
         const adapter = this.adapters[current.provider];
         if (!adapter) fail('PROVIDER_UNSUPPORTED', 'Provider ' + current.provider + ' is unsupported');
         const currentLimits = effectiveLimits(current);
-        const currentReceipts = await this.store.readReceipts();
+        const currentReceipts = await this.store.budgetReceipts(id);
         assertWithinUsageBudget(currentReceipts, current, currentLimits);
         const budgetReservationId = randomId('cxb');
         const common = {
@@ -360,8 +362,7 @@ export async function reconcileExternalEffect(id, request) {
   if (note.length < 8 || note.length > 500) fail('RECONCILIATION_NOTE_REQUIRED', 'Provide a non-secret reconciliation note between 8 and 500 characters');
 
   return this.store.withLock(async () => {
-    const all = await this.store.readReceipts();
-    const history = executionHistory(all, request.executionId);
+    const history = await this.store.executionHistory(request.executionId);
     const latest = history.at(-1);
     if (!latest || latest.connectionId !== id) fail('EXECUTION_NOT_FOUND', 'Unknown execution id for this connection');
     if (!['external-unknown', 'provider-edge-entered'].includes(latest.outcome)
