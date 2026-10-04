@@ -243,10 +243,10 @@ export class ReceiptIndex {
       try {
         const last = Buffer.alloc(1);
         await handle.read(last, 0, 1, offset - 1);
-        if (last[0] !== 10) separator = Buffer.from('\\n');
+        if (last[0] !== 10) separator = Buffer.from('\n');
       } finally { await handle.close(); }
     }
-    const line = Buffer.concat([separator, Buffer.from(JSON.stringify(receipt) + '\\n', 'utf8')]);
+    const line = Buffer.concat([separator, Buffer.from(JSON.stringify(receipt) + '\n', 'utf8')]);
     await fs.appendFile(this.receiptsPath, line, { mode: 0o600 });
     await this.indexReceipt(receipt);
     await this.writeMeta(offset + line.length, await this.logStat());
