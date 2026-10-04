@@ -58,7 +58,7 @@ test('indexed execution fails closed when the append-only receipt history is cor
   assert.equal(await fs.readFile(file, 'utf8'), corrupted);
 });
 
-test('uninstall removes derived receipt indexes while preserving the canonical home', async () => {
+test('uninstall preserves canonical receipt history and its derived indexes', async () => {
   const home = await tmpHome();
   const service = await readyService(home);
   await service.store.appendReceipt({
@@ -68,6 +68,7 @@ test('uninstall removes derived receipt indexes while preserving the canonical h
   await service.store.idempotencyHistory({ connectionId: 'api', capability: 'send', idempotencyKey: 'key' });
   assert.ok(await fs.stat(path.join(home, '.receipt-index')));
   await service.uninstall();
-  await assert.rejects(fs.stat(path.join(home, '.receipt-index')), { code: 'ENOENT' });
+  assert.ok(await fs.stat(path.join(home, '.receipt-index')));
+  assert.equal((await service.store.readReceipts()).length, 1);
   assert.ok(await fs.stat(home));
 });
