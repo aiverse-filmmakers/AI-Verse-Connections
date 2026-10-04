@@ -463,8 +463,8 @@ export class StateStore {
     return this.receiptIndex.budgetReceipts(connectionId, now);
   }
 
-  async unresolvedReceipts(connectionId) {
-    return this.receiptIndex.unresolvedReceipts(connectionId);
+  async unresolvedReceipts(connectionId, capability) {
+    return this.receiptIndex.unresolvedReceipts(connectionId, capability);
   }
 
   async findIdempotentReceipt({ connectionId, capability, idempotencyKey, outcomes = ['success'] }) {
