@@ -121,7 +121,7 @@ export class ReceiptIndex {
           if (isTerminal(receipt)) executions.delete(receipt.executionId);
         }
       }
-      offset += lineBytes + 1;
+      offset += lineBytes + (i < lines.length - 1 ? 1 : 0);
     }
     for (const [executionId, record] of executions) {
       if (!record.latest.connectionId) continue;
@@ -160,6 +160,8 @@ export class ReceiptIndex {
     if (append) {
       for (const file of paths) {
         if (file.startsWith(this.executionDir) && isTerminal(receipt)) continue;
+        await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+        await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
         await fs.appendFile(file, line, { mode: 0o600 });
       }
     } else {
