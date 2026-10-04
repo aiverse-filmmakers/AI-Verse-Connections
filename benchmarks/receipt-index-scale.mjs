@@ -26,6 +26,7 @@ async function medianFor(size) {
       }
     } finally { await handle.close(); }
 
+    global.gc?.();
     const rebuildStarted = performance.now();
     await store.idempotencyHistory(target);
     const rebuildMs = performance.now() - rebuildStarted;
@@ -47,7 +48,9 @@ async function medianFor(size) {
       timings.push(performance.now() - started);
     }
     timings.sort((a, b) => a - b);
-    return { records: size, rebuildMs: Number(rebuildMs.toFixed(3)), medianMs: Number(timings[Math.floor(timings.length / 2)].toFixed(3)), rssMiB: Number((process.memoryUsage().rss / 1024 / 1024).toFixed(1)) };
+    global.gc?.();
+    const memory = process.memoryUsage();
+    return { records: size, rebuildMs: Number(rebuildMs.toFixed(3)), medianMs: Number(timings[Math.floor(timings.length / 2)].toFixed(3)), heapMiB: Number((memory.heapUsed / 1024 / 1024).toFixed(1)), rssMiB: Number((memory.rss / 1024 / 1024).toFixed(1)) };
   } finally {
     await fs.rm(home, { recursive: true, force: true });
   }
@@ -58,3 +61,4 @@ const large = await medianFor(100_000);
 const ratio = Number((large.medianMs / Math.max(small.medianMs, 0.05)).toFixed(2));
 console.log(JSON.stringify({ benchmark: 'indexed receipt lookup and pending/terminal commit', samples, small, large, ratio }, null, 2));
 if (ratio > 4) throw new Error('Receipt lookup/commit scale ratio exceeded 4x: ' + ratio);
+if (large.heapMiB > small.heapMiB + 32) throw new Error('Post-rebuild heap growth exceeded 32 MiB: ' + small.heapMiB + ' -> ' + large.heapMiB);
