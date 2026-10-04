@@ -161,12 +161,12 @@ export class ReceiptIndex {
       for (const file of paths) {
         if (file.startsWith(this.executionDir) && isTerminal(receipt)) continue;
         await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-        await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
         await fs.appendFile(file, line, { mode: 0o600 });
       }
     } else {
       for (const file of paths) {
         if (file.startsWith(this.executionDir) && isTerminal(receipt)) continue;
+        await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
         await fs.appendFile(file, line, { mode: 0o600 });
       }
     }
@@ -237,7 +237,16 @@ export class ReceiptIndex {
     await this.ensure();
     const stat = await this.logStat();
     const offset = stat?.size || 0;
-    const line = Buffer.from(JSON.stringify(receipt) + '\n', 'utf8');
+    let separator = Buffer.alloc(0);
+    if (offset > 0) {
+      const handle = await fs.open(this.receiptsPath, 'r');
+      try {
+        const last = Buffer.alloc(1);
+        await handle.read(last, 0, 1, offset - 1);
+        if (last[0] !== 10) separator = Buffer.from('\\n');
+      } finally { await handle.close(); }
+    }
+    const line = Buffer.concat([separator, Buffer.from(JSON.stringify(receipt) + '\\n', 'utf8')]);
     await fs.appendFile(this.receiptsPath, line, { mode: 0o600 });
     await this.indexReceipt(receipt);
     await this.writeMeta(offset + line.length, await this.logStat());
