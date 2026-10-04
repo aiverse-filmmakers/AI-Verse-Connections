@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { ConnectionsError } from '../src/errors.js';
+import { formatCliError } from '../src/cli.js';
 import { ConnectionsService } from '../src/service.js';
 import { tmpHome, startServer, readBody, readyService, approveGeneric, expectCode } from '../test-support/helpers.js';
 
@@ -45,8 +48,10 @@ test('idempotency reservation prevents concurrent duplicate side effects and rep
 test('MCP 2026-07-28 discovery requires explicit admission and capability changes revoke approval', async (t) => {
   let schemaVersion = 1;
   let toolCalls = 0;
+  let rpcError = null;
+  const echoedBearer = 'mcp-token';
   const server = await startServer(async (req, res) => {
-    if (req.headers.authorization !== 'Bearer mcp-token') return res.writeHead(401).end();
+    if (req.headers.authorization !== 'Bearer ' + echoedBearer) return res.writeHead(401).end();
     assert.equal(req.headers['mcp-protocol-version'], '2026-07-28');
     const body = JSON.parse(await readBody(req));
     assert.equal(req.headers['mcp-method'], body.method);
@@ -74,6 +79,9 @@ test('MCP 2026-07-28 discovery requires explicit admission and capability change
     })();
     if (!result) return res.writeHead(400).end();
     res.setHeader('content-type', 'application/json');
+    if (body.method === 'tools/call' && rpcError) {
+      return res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: rpcError }));
+    }
     res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }));
   });
   t.after(server.close);
@@ -102,6 +110,42 @@ test('MCP 2026-07-28 discovery requires explicit admission and capability change
   assert.equal(result.securitySignals.suspicious, true);
   assert.equal(toolCalls, 1);
 
+  const echoedPrivateData = 'customer-private-lookup-result';
+  rpcError = {
+    code: -32042,
+    message: 'Authorization failed for Bearer ' + echoedBearer + '; upstream said ' + echoedPrivateData,
+    data: { token: echoedBearer, context: echoedPrivateData }
+  };
+  let providerError;
+  try {
+    await service.execute('mcp1', {
+      capability: cap, systemId: 'sys-a', workspaceId: 'ws-a', actor: 'test',
+      grantedCapabilities: [cap], idempotencyKey: 'mcp-error-1',
+      input: { arguments: { q: 'secret-bearing-failure' } }
+    });
+  } catch (err) { providerError = err; }
+  assert.ok(providerError instanceof ConnectionsError);
+  assert.equal(providerError.code, 'MCP_RPC_ERROR');
+  assert.equal(providerError.message, 'MCP provider returned an RPC error');
+  assert.deepEqual(providerError.details, { providerCode: -32042 });
+
+  const cliDiagnostic = formatCliError(providerError);
+  const cliJson = JSON.stringify(cliDiagnostic);
+  assert.equal(cliDiagnostic.message, 'MCP provider returned an RPC error');
+  assert.equal(cliDiagnostic.details.providerCode, -32042);
+  assert.equal(cliJson.includes(echoedBearer), false);
+  assert.equal(cliJson.includes(echoedPrivateData), false);
+
+  const receiptText = await readFile(service.store.receiptsPath, 'utf8');
+  assert.equal(receiptText.includes(echoedBearer), false);
+  assert.equal(receiptText.includes(echoedPrivateData), false);
+  assert.equal(receiptText.includes('errorMessage'), false);
+  const receipts = await service.store.readReceipts();
+  const failed = receipts.findLast((receipt) => receipt.idempotencyKey === 'mcp-error-1');
+  assert.equal(failed.outcome, 'external-unknown');
+  assert.equal(failed.errorCode, 'MCP_RPC_ERROR');
+
+  rpcError = null;
   schemaVersion = 2;
   const changed = await service.verify('mcp1');
   assert.equal(changed.status.approved, false);

@@ -88,11 +88,19 @@ export async function main(argv = process.argv.slice(2)) {
   output(result, bool(f.json));
 }
 
+export function formatCliError(err) {
+  const code = err instanceof ConnectionsError ? err.code : 'UNEXPECTED_ERROR';
+  if (code === 'MCP_RPC_ERROR') {
+    const providerCode = Number.isSafeInteger(err?.details?.providerCode) ? err.details.providerCode : null;
+    return { ok: false, error: code, message: 'MCP provider returned an RPC error', details: { providerCode } };
+  }
+  return { ok: false, error: code, message: err.message, details: err.details };
+}
+
 export async function runCli() {
   try { await main(); }
   catch (err) {
-    const code = err instanceof ConnectionsError ? err.code : 'UNEXPECTED_ERROR';
-    process.stderr.write(`${JSON.stringify({ ok: false, error: code, message: err.message, details: err.details })}\n`);
+    process.stderr.write(`${JSON.stringify(formatCliError(err))}\n`);
     process.exitCode = err instanceof ConnectionsError ? 2 : 1;
   }
 }

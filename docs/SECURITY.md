@@ -79,6 +79,10 @@ Receipts include scope, actor, connection, provider, capability, risk, approval 
 
 Receipts intentionally exclude response bodies and credentials.
 
+## MCP provider error diagnostics
+
+Remote JSON-RPC error messages and data are untrusted and may contain credentials or private provider context. Connections discards those fields at the adapter boundary, emits a fixed local error summary, and retains only a bounded numeric JSON-RPC code when valid. The durable external-effect receipt stores the stable local error code only. CLI JSON/plain diagnostics use the fixed summary and numeric code; raw provider error objects are never included in receipts or output.
+
 ## Receipt corruption and recovery
 
 The receipt log is execution authority for idempotency, budget and external-effect recovery. A malformed or truncated line is not skipped: receipt reads fail with a line number, byte offset, valid-prefix count and SHA-256 fingerprint, and external execution remains blocked. Doctor reports receipt integrity as unhealthy and marks external-effect recovery unavailable. Read and doctor operations preserve the original bytes.
