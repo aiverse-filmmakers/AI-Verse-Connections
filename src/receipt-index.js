@@ -169,7 +169,7 @@ export class ReceiptIndex {
       ? current?.receipt?.executionId === receipt.executionId
       : current?.receipt?.receiptId === receipt.receiptId;
     if (!sameExecution) return;
-    const directory = path.join(this.unresolvedDir, safeComponent(receipt.connectionId));
+    const directory = path.join(this.unresolvedDir, safeComponent(receipt.connectionId), safeComponent(receipt.capability));
     let names = [];
     try { names = await fs.readdir(directory); }
     catch (err) { if (err.code !== 'ENOENT') throw err; }
@@ -216,7 +216,7 @@ export class ReceiptIndex {
     if (receipt.executionId && receipt.connectionId) {
       const edge = receipt.providerEdgeEntered === true || receipt.outcome === 'external-unknown' || (receipt.outcome === 'failure' && receipt.attemptedExternal === true);
       if (isTerminal(receipt)) {
-        await fs.rm(this.unresolvedPath(receipt.connectionId, receipt.executionId), { force: true });
+        await fs.rm(this.unresolvedPath(receipt.connectionId, receipt.capability, receipt.executionId), { force: true });
         await this.updateUnresolvedSummary(receipt, false, { terminal: true });
       }
       else {
@@ -227,7 +227,7 @@ export class ReceiptIndex {
       }
     } else if (receipt.connectionId && receipt.idempotencyKey
       && ['pending', 'budget-reserved', 'failure'].includes(receipt.outcome)) {
-      const legacyDir = path.join(this.unresolvedDir, safeComponent(receipt.connectionId));
+      const legacyDir = path.join(this.unresolvedDir, safeComponent(receipt.connectionId), safeComponent(receipt.capability));
       const legacyPath = path.join(legacyDir, 'legacy-' + safeComponent(receipt.receiptId) + '.json');
       if (isTerminal(receipt)) await fs.rm(legacyPath, { force: true });
       else {
@@ -238,8 +238,8 @@ export class ReceiptIndex {
     }
   }
 
-  unresolvedPath(connectionId, executionId) {
-    return path.join(this.unresolvedDir, safeComponent(connectionId), safeComponent(executionId) + '.json');
+  unresolvedPath(connectionId, capability, executionId) {
+    return path.join(this.unresolvedDir, safeComponent(connectionId), safeComponent(capability), safeComponent(executionId) + '.json');
   }
 
   async writeUnresolved(receipt, edgeEntered) {
