@@ -121,17 +121,50 @@ export async function doctor() {
   const checks = [];
   const writeLock = await this.store.inspectWriteLock();
   checks.push({ depth: 'structural', name: 'write-lock', ok: writeLock.ok, detail: writeLock });
-  const externalEffects = inspectExternalEffects(await this.store.readReceipts());
-  checks.push({
-    depth: 'state-lock',
-    name: 'external-effect-recovery',
-    ok: externalEffects.unresolved.length === 0,
-    detail: {
-      unresolved: externalEffects.unresolved,
-      abandonedBeforeProvider: externalEffects.abandonedBeforeEdge.length,
-      inProgress: externalEffects.inProgress.length
+  try {
+    const receiptLog = await this.store.inspectReceiptLog();
+    checks.push({
+      depth: 'structural',
+      name: 'receipt-log-integrity',
+      ok: receiptLog.ok,
+      detail: receiptLog.ok
+        ? { receiptCount: receiptLog.receipts.length, fingerprint: receiptLog.fingerprint }
+        : { fingerprint: receiptLog.fingerprint, bytes: receiptLog.bytes, ...receiptLog.corruption }
+    });
+    if (receiptLog.ok) {
+      const externalEffects = inspectExternalEffects(receiptLog.receipts);
+      checks.push({
+        depth: 'state-lock',
+        name: 'external-effect-recovery',
+        ok: externalEffects.unresolved.length === 0,
+        detail: {
+          unresolved: externalEffects.unresolved,
+          abandonedBeforeProvider: externalEffects.abandonedBeforeEdge.length,
+          inProgress: externalEffects.inProgress.length
+        }
+      });
+    } else {
+      checks.push({
+        depth: 'state-lock',
+        name: 'external-effect-recovery',
+        ok: false,
+        detail: { unavailable: true, reason: 'receipt-log-corrupt', unresolved: 'unknown' }
+      });
     }
-  });
+  } catch (err) {
+    checks.push({
+      depth: 'structural',
+      name: 'receipt-log-integrity',
+      ok: false,
+      detail: { code: err.code || 'RECEIPT_LOG_READ_FAILED' }
+    });
+    checks.push({
+      depth: 'state-lock',
+      name: 'external-effect-recovery',
+      ok: false,
+      detail: { unavailable: true, reason: 'receipt-log-unreadable', unresolved: 'unknown' }
+    });
+  }
   checks.push({ depth: 'structural', name: 'installed-state', ok: status.lifecycle.installed });
   checks.push({ depth: 'attachment/discovery', name: 'setup', ok: status.lifecycle.setup, detail: status.lifecycle.systemId });
   const registry = await this.store.getRegistry();
@@ -149,7 +182,7 @@ export async function doctor() {
     checks.push({ depth: 'operational', connectionId: c.id, name: 'connection-health', ok: !!c.status?.healthy && !!c.status?.authorized, error: c.status?.lastError || null });
   }
   const ok = checks.every((c) => c.ok) && status.state === 'ready';
-  return { ...status, doctor: { ok, depthChecked: ['structural', 'state-lock', 'attachment/discovery', 'runtime', 'dependency', 'operational'], checks } };
+  return { ...status, doctor: { ok, depthChecked: ['structural', 'receipt-integrity', 'state-lock', 'attachment/discovery', 'runtime', 'dependency', 'operational'], checks } };
 }
 
 
