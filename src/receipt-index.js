@@ -50,10 +50,9 @@ async function readJson(file) {
 }
 
 export class ReceiptIndex {
-  constructor(home, receiptsPath, inspectReceiptLog) {
+  constructor(home, receiptsPath) {
     this.home = home;
     this.receiptsPath = receiptsPath;
-    this.inspectReceiptLog = inspectReceiptLog;
     this.root = path.join(home, '.receipt-index');
     this.metaPath = path.join(this.root, 'meta.json');
     this.catalogPath = path.join(this.root, 'catalog.json');
@@ -233,6 +232,10 @@ export class ReceiptIndex {
       bytes: meta.bytes + lineBytes,
       digest: hash(meta.digest + '\0' + line.trimEnd())
     });
+    if (!this.catalogFiles.has(relative)) {
+      this.catalogFiles.add(relative);
+      await atomicJson(this.catalogPath, { schemaVersion: SCHEMA_VERSION, files: [...this.catalogFiles].sort() });
+    }
     return true;
   }
 
@@ -375,8 +378,8 @@ export class ReceiptIndex {
       let meta;
       try { meta = await readJson(file + '.meta.json'); }
       catch { await this.rebuild(); return this.readIndexed(file); }
-      if (meta) { await this.rebuild(); return this.readIndexed(file); }
-      return [];
+      await this.rebuild();
+      return this.readIndexed(file);
     }
     let meta;
     try { meta = await readJson(file + '.meta.json'); }
