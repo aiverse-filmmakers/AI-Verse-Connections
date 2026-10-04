@@ -94,3 +94,50 @@ test('system/workspace scope and final-edge revocation are enforced outside mode
   }), 'CONNECTION_UNHEALTHY');
 });
 
+
+test('malformed receipt history is reported by doctor and preserved without dropping its valid prefix', async () => {
+  const home = await tmpHome();
+  const service = await readyService(home);
+  const valid = JSON.stringify({ receiptId: 'cxr-valid-prefix', outcome: 'success', connectionId: 'api', capability: 'send' });
+  const raw = `${valid}\n{broken-json}\n${JSON.stringify({ receiptId: 'cxr-after-corruption', outcome: 'success' })}\n`;
+  const receiptsPath = path.join(home, 'receipts.ndjson');
+  await fs.writeFile(receiptsPath, raw, { mode: 0o600 });
+
+  const inspected = await service.store.inspectReceiptLog();
+  assert.equal(inspected.ok, false);
+  assert.equal(inspected.receipts.length, 1);
+  assert.equal(inspected.receipts[0].receiptId, 'cxr-valid-prefix');
+  assert.equal(inspected.corruption.line, 2);
+  assert.equal(inspected.corruption.validReceiptCount, 1);
+  assert.equal(inspected.corruption.truncatedTail, false);
+
+  const doctor = await service.doctor();
+  assert.equal(doctor.doctor.ok, false);
+  const integrity = doctor.doctor.checks.find((item) => item.name === 'receipt-log-integrity');
+  const recovery = doctor.doctor.checks.find((item) => item.name === 'external-effect-recovery');
+  assert.equal(integrity.ok, false);
+  assert.equal(integrity.detail.line, 2);
+  assert.equal(recovery.ok, false);
+  assert.equal(recovery.detail.unresolved, 'unknown');
+
+  await expectCode(service.store.readReceipts(), 'RECEIPT_LOG_CORRUPT');
+  assert.equal(await fs.readFile(receiptsPath, 'utf8'), raw, 'inspection must not truncate or rewrite source evidence');
+});
+
+test('truncated final receipt line is identified as a tail and blocks receipt consumers', async () => {
+  const home = await tmpHome();
+  const service = await readyService(home);
+  const valid = JSON.stringify({ receiptId: 'cxr-valid-prefix', outcome: 'success' });
+  const raw = `${valid}\n{"receiptId":"cxr-truncated"`;
+  await fs.writeFile(path.join(home, 'receipts.ndjson'), raw, { mode: 0o600 });
+
+  const inspected = await service.store.inspectReceiptLog();
+  assert.equal(inspected.ok, false);
+  assert.equal(inspected.corruption.line, 2);
+  assert.equal(inspected.corruption.validReceiptCount, 1);
+  assert.equal(inspected.corruption.truncatedTail, true);
+  await expectCode(service.store.findIdempotentReceipt({
+    connectionId: 'api', capability: 'send', idempotencyKey: 'retry-after-crash'
+  }), 'RECEIPT_LOG_CORRUPT');
+  assert.equal(await fs.readFile(path.join(home, 'receipts.ndjson'), 'utf8'), raw);
+});

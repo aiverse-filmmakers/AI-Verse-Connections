@@ -395,14 +395,56 @@ export class StateStore {
     await fs.appendFile(this.receiptsPath, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
   }
 
-  async readReceipts() {
-    try {
-      const raw = await fs.readFile(this.receiptsPath, 'utf8');
-      return raw.split('\n').filter(Boolean).map((line) => JSON.parse(line));
-    } catch (err) {
-      if (err.code === 'ENOENT') return [];
+  async inspectReceiptLog() {
+    let raw;
+    try { raw = await fs.readFile(this.receiptsPath, 'utf8'); }
+    catch (err) {
+      if (err.code === 'ENOENT') return { ok: true, receipts: [], fingerprint: null, bytes: 0 };
       throw err;
     }
+    const receipts = [];
+    const lines = raw.split('\n');
+    let charOffset = 0;
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (line.trim()) {
+        try { receipts.push(JSON.parse(line)); }
+        catch {
+          const prefix = raw.slice(0, charOffset);
+          return {
+            ok: false,
+            receipts,
+            fingerprint: crypto.createHash('sha256').update(raw).digest('hex'),
+            bytes: Buffer.byteLength(raw, 'utf8'),
+            corruption: {
+              line: index + 1,
+              byteOffset: Buffer.byteLength(prefix, 'utf8'),
+              validReceiptCount: receipts.length,
+              truncatedTail: index === lines.length - 1 && !raw.endsWith('\n')
+            }
+          };
+        }
+      }
+      charOffset += line.length + 1;
+    }
+    return {
+      ok: true,
+      receipts,
+      fingerprint: crypto.createHash('sha256').update(raw).digest('hex'),
+      bytes: Buffer.byteLength(raw, 'utf8')
+    };
+  }
+
+  async readReceipts() {
+    const inspected = await this.inspectReceiptLog();
+    if (!inspected.ok) {
+      fail('RECEIPT_LOG_CORRUPT', 'Connections receipt log contains malformed data; history was preserved and external execution is blocked', {
+        fingerprint: inspected.fingerprint,
+        bytes: inspected.bytes,
+        ...inspected.corruption
+      });
+    }
+    return inspected.receipts;
   }
 
   async findIdempotentReceipt({ connectionId, capability, idempotencyKey, outcomes = ['success'] }) {
