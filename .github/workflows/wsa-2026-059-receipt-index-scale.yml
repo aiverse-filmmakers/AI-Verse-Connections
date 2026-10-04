@@ -18,4 +18,4 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node benchmarks/receipt-index-scale.mjs
+      - run: node --expose-gc benchmarks/receipt-index-scale.mjs
