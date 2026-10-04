@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fail } from './errors.js';
@@ -114,7 +115,7 @@ export class ReceiptIndex {
     const stat = await this.logStat();
     if (stat) {
       let pending = Buffer.alloc(0);
-      for await (const data of fs.createReadStream(this.receiptsPath)) {
+      for await (const data of createReadStream(this.receiptsPath)) {
         const chunk = Buffer.concat([pending, data]);
         let start = 0;
         for (let i = 0; i < chunk.length; i += 1) {
