@@ -78,3 +78,16 @@ Explicit private-network access is a high-trust operator setting and is disabled
 Receipts include scope, actor, connection, provider, capability, risk, approval route, outcome, external status, trust label and external-canonical provenance.
 
 Receipts intentionally exclude response bodies and credentials.
+
+## Receipt corruption and recovery
+
+The receipt log is execution authority for idempotency, budget and external-effect recovery. A malformed or truncated line is not skipped: receipt reads fail with a line number, byte offset, valid-prefix count and SHA-256 fingerprint, and external execution remains blocked. Doctor reports receipt integrity as unhealthy and marks external-effect recovery unavailable. Read and doctor operations preserve the original bytes.
+
+Recovery is operator-driven and must preserve the exact damaged log before replacing anything:
+
+1. Stop Connections and make a byte-for-byte quarantine copy of the complete damaged receipts.ndjson. Retain its reported fingerprint and restrict the copy to the same local file permissions as the live state.
+2. Restore a known-good complete receipt backup, or reconstruct the complete ledger from the trustworthy valid prefix plus provider and system records. Include an external-unknown receipt and reconcile it when any provider effect may have happened without a trustworthy terminal receipt.
+3. Validate every candidate NDJSON line and the complete reconstructed history before atomically replacing receipts.ndjson. Never skip only the malformed line, truncate to the valid prefix, or rebuild an empty ledger.
+4. Restart Connections and require doctor to report receipt-log-integrity and external-effect-recovery healthy. Reconcile any unresolved external effects before resuming execution.
+
+If complete history cannot be reconstructed, leave execution blocked and preserve both the original ledger and its quarantine copy for manual recovery. Receipt corruption is not resolved by clearing the registry, resetting budgets or retrying the provider operation.
