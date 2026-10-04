@@ -8,6 +8,11 @@ test('receipt indexes recover an appended ledger tail and keep idempotency and r
   const home = await tmpHome();
   const service = await readyService(home);
   const key = { connectionId: 'api', capability: 'send', idempotencyKey: 'same-key' };
+  const oldBudget = {
+    receiptId: 'cxr-index-old-budget', timestamp: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+    connectionId: 'api', capability: 'historic', outcome: 'success', attemptedExternal: true
+  };
+  await service.store.appendReceipt(oldBudget);
   const first = {
     receiptId: 'cxr-index-first', timestamp: new Date().toISOString(),
     ...key, executionId: 'cxe-index-first', outcome: 'pending', executionActive: true
@@ -24,7 +29,11 @@ test('receipt indexes recover an appended ledger tail and keep idempotency and r
   assert.deepEqual(history.map((receipt) => receipt.receiptId), [first.receiptId, crashedWriterRecord.receiptId]);
   assert.equal((await service.store.findIdempotentReceipt({ ...key, outcomes: ['success'] })).receiptId, crashedWriterRecord.receiptId);
   assert.deepEqual((await service.store.budgetReceipts('api')).map((receipt) => receipt.receiptId), [crashedWriterRecord.receiptId]);
-  assert.equal((await service.store.readReceipts()).length, 2);
+  assert.equal((await service.store.readReceipts()).length, 3);
+
+  await fs.rm(path.join(home, '.receipt-index'), { recursive: true, force: true });
+  assert.equal((await service.store.findIdempotentReceipt({ ...key, outcomes: ['success'] })).receiptId, crashedWriterRecord.receiptId);
+  assert.equal((await service.store.readReceipts()).length, 3);
 });
 
 test('indexed execution fails closed when the append-only receipt history is corrupted', async () => {
