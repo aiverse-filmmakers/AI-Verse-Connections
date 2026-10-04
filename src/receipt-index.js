@@ -56,6 +56,8 @@ export class ReceiptIndex {
     this.inspectReceiptLog = inspectReceiptLog;
     this.root = path.join(home, '.receipt-index');
     this.metaPath = path.join(this.root, 'meta.json');
+    this.catalogPath = path.join(this.root, 'catalog.json');
+    this.catalogFiles = null;
     this.idempotencyDir = path.join(this.root, 'idempotency');
     this.executionDir = path.join(this.root, 'execution');
     this.budgetDir = path.join(this.root, 'budget');
@@ -102,6 +104,7 @@ export class ReceiptIndex {
     ]);
     this.rebuilding = true;
     this.rebuildFileStates = new Map();
+    this.catalogFiles = new Set();
     let offset = 0;
     let lineNumber = 0;
     let validReceiptCount = 0;
@@ -139,6 +142,7 @@ export class ReceiptIndex {
       }
     }
     for (const [file, state] of this.rebuildFileStates) await atomicJson(file + '.meta.json', state);
+    await atomicJson(this.catalogPath, { schemaVersion: SCHEMA_VERSION, files: [...this.catalogFiles].sort() });
     this.rebuilding = false;
     this.rebuildFileStates = null;
     await this.writeMeta(offset, await this.logStat());
@@ -203,6 +207,7 @@ export class ReceiptIndex {
       state.bytes += lineBytes;
       state.digest = hash(state.digest + '\0' + line.trimEnd());
       this.rebuildFileStates.set(file, state);
+      this.catalogFiles.add(path.relative(this.root, file).split(path.sep).join('/'));
       return true;
     }
     let meta;
@@ -211,6 +216,8 @@ export class ReceiptIndex {
     let stat;
     try { stat = await fs.stat(file); }
     catch (err) { if (err.code !== 'ENOENT') throw err; }
+    const relative = path.relative(this.root, file).split(path.sep).join('/');
+    if (!this.catalogFiles?.has(relative) && stat?.size) { await this.rebuild(); return false; }
     if (!meta) {
       if (stat?.size) { await this.rebuild(); return false; }
       meta = { schemaVersion: SCHEMA_VERSION, count: 0, bytes: 0, digest: hash('') };
@@ -285,6 +292,12 @@ export class ReceiptIndex {
     let meta;
     try { meta = await readJson(this.metaPath); }
     catch { return this.rebuild(); }
+    let catalog;
+    try { catalog = await readJson(this.catalogPath); }
+    catch { return this.rebuild(); }
+    if (!catalog || catalog.schemaVersion !== SCHEMA_VERSION || !Array.isArray(catalog.files)
+      || catalog.files.some((file) => typeof file !== 'string')) return this.rebuild();
+    this.catalogFiles = new Set(catalog.files);
     if (!meta || meta.schemaVersion !== SCHEMA_VERSION || !Number.isSafeInteger(meta.offset)) return this.initialize();
     const stat = await this.logStat();
     const size = stat?.size || 0;
@@ -344,6 +357,17 @@ export class ReceiptIndex {
   }
 
   async readIndexed(file) {
+    const relative = path.relative(this.root, file).split(path.sep).join('/');
+    if (!this.catalogFiles?.has(relative)) {
+      try {
+        await fs.stat(file);
+        await this.rebuild();
+        return this.readIndexed(file);
+      } catch (err) {
+        if (err.code !== 'ENOENT') throw err;
+        return [];
+      }
+    }
     let raw;
     try { raw = await fs.readFile(file, 'utf8'); }
     catch (err) {
