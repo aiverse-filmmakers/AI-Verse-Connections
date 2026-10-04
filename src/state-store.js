@@ -5,6 +5,7 @@ import path from 'node:path';
 import { COMPONENT_ID, STATE_SCHEMA_VERSION } from './constants.js';
 import { fail } from './errors.js';
 import { nowIso } from './util.js';
+import { ReceiptIndex } from './receipt-index.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -15,6 +16,7 @@ const OWNED_ENTRIES = new Set([
   'registry.json',
   'credentials.enc.json',
   'receipts.ndjson',
+  '.receipt-index',
   '.write.lock',
   '.write.lock.reclaim',
   OWNERSHIP_FILENAME
@@ -25,6 +27,7 @@ const LEGACY_ENTRIES = new Set([
   'registry.json',
   'credentials.enc.json',
   'receipts.ndjson',
+  '.receipt-index',
   '.write.lock'
 ]);
 
@@ -139,6 +142,7 @@ export class StateStore {
     this.receiptsPath = path.join(this.home, 'receipts.ndjson');
     this.lockPath = path.join(this.home, '.write.lock');
     this.ownershipPath = path.join(this.home, OWNERSHIP_FILENAME);
+    this.receiptIndex = new ReceiptIndex(this.home, this.receiptsPath);
   }
 
   async inspectHome({ allowMissing = false } = {}) {
@@ -392,7 +396,7 @@ export class StateStore {
 
   async appendReceipt(receipt) {
     await this.ensureHome();
-    await fs.appendFile(this.receiptsPath, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
+    return this.receiptIndex.append(receipt);
   }
 
   async inspectReceiptLog() {
@@ -447,10 +451,26 @@ export class StateStore {
     return inspected.receipts;
   }
 
+  async idempotencyHistory({ connectionId, capability, idempotencyKey }) {
+    return this.receiptIndex.idempotencyHistory({ connectionId, capability, idempotencyKey });
+  }
+
+  async executionHistory(executionId) {
+    return this.receiptIndex.executionHistory(executionId);
+  }
+
+  async budgetReceipts(connectionId, now = Date.now()) {
+    return this.receiptIndex.budgetReceipts(connectionId, now);
+  }
+
+  async unresolvedReceipts(connectionId) {
+    return this.receiptIndex.unresolvedReceipts(connectionId);
+  }
+
   async findIdempotentReceipt({ connectionId, capability, idempotencyKey, outcomes = ['success'] }) {
     if (!idempotencyKey) return null;
-    const receipts = await this.readReceipts();
-    return receipts.findLast((r) => r.connectionId === connectionId && r.capability === capability && r.idempotencyKey === idempotencyKey && outcomes.includes(r.outcome)) || null;
+    const receipts = await this.idempotencyHistory({ connectionId, capability, idempotencyKey });
+    return receipts.findLast((r) => outcomes.includes(r.outcome)) || null;
   }
 
   async purgeAll() {
