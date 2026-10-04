@@ -147,7 +147,7 @@ export class ReceiptIndex {
     const line = JSON.stringify(receipt) + '\n';
     const paths = [];
     const key = indexedKey(receipt);
-    if (key) paths.push(path.join(this.idempotencyDir, safeComponent(key) + '.ndjson'));
+    if (key) paths.push(path.join(this.idempotencyDir, safeComponent(key).slice(0, 3) + '.ndjson'));
     if (isBudgetEvidence(receipt)) {
       const day = String(receipt.timestamp || '').slice(0, 10) || 'unknown-day';
       paths.push(path.join(this.budgetDir, safeComponent(receipt.connectionId), day + '.ndjson'));
@@ -277,7 +277,8 @@ export class ReceiptIndex {
     if (!idempotencyKey) return [];
     await this.ensure();
     const key = [connectionId || '', capability || '', idempotencyKey].join('\0');
-    return this.readIndexed(path.join(this.idempotencyDir, safeComponent(key) + '.ndjson'));
+    const records = await this.readIndexed(path.join(this.idempotencyDir, safeComponent(key).slice(0, 3) + '.ndjson'));
+    return records.filter((receipt) => indexedKey(receipt) === key);
   }
 
   async executionHistory(executionId) {
