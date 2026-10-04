@@ -220,7 +220,7 @@ export class ReceiptIndex {
         await this.updateUnresolvedSummary(receipt, false, { terminal: true });
       }
       else {
-        const previous = await readJson(this.unresolvedPath(receipt.connectionId, receipt.executionId));
+        const previous = await readJson(this.unresolvedPath(receipt.connectionId, receipt.capability, receipt.executionId));
         const edgeEntered = Boolean(previous?.edgeEntered || edge);
         await this.writeUnresolved(receipt, edgeEntered);
         await this.updateUnresolvedSummary(receipt, edgeEntered);
@@ -243,7 +243,7 @@ export class ReceiptIndex {
   }
 
   async writeUnresolved(receipt, edgeEntered) {
-    await atomicJson(this.unresolvedPath(receipt.connectionId, receipt.executionId), {
+    await atomicJson(this.unresolvedPath(receipt.connectionId, receipt.capability, receipt.executionId), {
       edgeEntered,
       receipt
     });
