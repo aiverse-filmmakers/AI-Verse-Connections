@@ -100,6 +100,8 @@ export class ReceiptIndex {
       fs.mkdir(this.unresolvedDir, { recursive: true, mode: 0o700 }),
       fs.mkdir(this.unresolvedSummaryDir, { recursive: true, mode: 0o700 })
     ]);
+    this.rebuilding = true;
+    this.rebuildFileStates = new Map();
     let offset = 0;
     let lineNumber = 0;
     let validReceiptCount = 0;
@@ -136,6 +138,9 @@ export class ReceiptIndex {
         offset += pending.length;
       }
     }
+    for (const [file, state] of this.rebuildFileStates) await atomicJson(file + '.meta.json', state);
+    this.rebuilding = false;
+    this.rebuildFileStates = null;
     await this.writeMeta(offset, await this.logStat());
   }
 
@@ -339,23 +344,42 @@ export class ReceiptIndex {
   }
 
   async readIndexed(file) {
-    try {
-      const raw = await fs.readFile(file, 'utf8');
-      const seen = new Set();
-      const result = [];
-      for (const line of raw.split('\n')) {
-        if (!line) continue;
-        let item;
-        try { item = JSON.parse(line); }
-        catch { await this.rebuild(); return this.readIndexed(file); }
-        const receipt = item.receipt || item;
-        if (!seen.has(receipt.receiptId)) { seen.add(receipt.receiptId); result.push(receipt); }
-      }
-      return result;
-    } catch (err) {
-      if (err.code === 'ENOENT') return [];
-      throw err;
+    let raw;
+    try { raw = await fs.readFile(file, 'utf8'); }
+    catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+      let meta;
+      try { meta = await readJson(file + '.meta.json'); }
+      catch { await this.rebuild(); return this.readIndexed(file); }
+      if (meta) { await this.rebuild(); return this.readIndexed(file); }
+      return [];
     }
+    let meta;
+    try { meta = await readJson(file + '.meta.json'); }
+    catch { await this.rebuild(); return this.readIndexed(file); }
+    if (!meta || meta.schemaVersion !== SCHEMA_VERSION) {
+      await this.rebuild();
+      return this.readIndexed(file);
+    }
+    const seen = new Set();
+    const result = [];
+    let count = 0;
+    let digest = hash('');
+    for (const line of raw.split('\n')) {
+      if (!line) continue;
+      let item;
+      try { item = JSON.parse(line); }
+      catch { await this.rebuild(); return this.readIndexed(file); }
+      count += 1;
+      digest = hash(digest + '\0' + line);
+      const receipt = item.receipt || item;
+      if (!seen.has(receipt.receiptId)) { seen.add(receipt.receiptId); result.push(receipt); }
+    }
+    if (meta.count !== count || meta.bytes !== Buffer.byteLength(raw, 'utf8') || meta.digest !== digest) {
+      await this.rebuild();
+      return this.readIndexed(file);
+    }
+    return result;
   }
 
   async idempotencyHistory({ connectionId, capability, idempotencyKey }) {
