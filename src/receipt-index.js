@@ -60,6 +60,7 @@ export class ReceiptIndex {
     this.executionDir = path.join(this.root, 'execution');
     this.budgetDir = path.join(this.root, 'budget');
     this.unresolvedDir = path.join(this.root, 'unresolved');
+    this.unresolvedSummaryDir = path.join(this.root, 'unresolved-summary');
   }
 
   async failCorrupt(message, details = {}) {
@@ -94,7 +95,8 @@ export class ReceiptIndex {
       fs.mkdir(this.idempotencyDir, { recursive: true, mode: 0o700 }),
       fs.mkdir(this.executionDir, { recursive: true, mode: 0o700 }),
       fs.mkdir(this.budgetDir, { recursive: true, mode: 0o700 }),
-      fs.mkdir(this.unresolvedDir, { recursive: true, mode: 0o700 })
+      fs.mkdir(this.unresolvedDir, { recursive: true, mode: 0o700 }),
+      fs.mkdir(this.unresolvedSummaryDir, { recursive: true, mode: 0o700 })
     ]);
     let offset = 0;
     let lineNumber = 0;
@@ -147,6 +149,43 @@ export class ReceiptIndex {
     });
   }
 
+  unresolvedSummaryPath(connectionId, capability) {
+    return path.join(this.unresolvedSummaryDir, safeComponent(connectionId), safeComponent(capability) + '.json');
+  }
+
+  async updateUnresolvedSummary(receipt, edgeEntered, { terminal = false } = {}) {
+    const file = this.unresolvedSummaryPath(receipt.connectionId, receipt.capability);
+    let current;
+    try { current = await readJson(file); }
+    catch { await this.rebuild(); current = await readJson(file); }
+    if (!terminal) {
+      if (!current || current.receipt?.executionId === receipt.executionId
+        || current.receipt?.receiptId === receipt.receiptId) {
+        await atomicJson(file, { edgeEntered, receipt });
+      }
+      return;
+    }
+    const sameExecution = receipt.executionId
+      ? current?.receipt?.executionId === receipt.executionId
+      : current?.receipt?.receiptId === receipt.receiptId;
+    if (!sameExecution) return;
+    const directory = path.join(this.unresolvedDir, safeComponent(receipt.connectionId));
+    let names = [];
+    try { names = await fs.readdir(directory); }
+    catch (err) { if (err.code !== 'ENOENT') throw err; }
+    for (const name of names) {
+      if (!name.endsWith('.json')) continue;
+      let candidate;
+      try { candidate = await readJson(path.join(directory, name)); }
+      catch { continue; }
+      if (candidate?.receipt?.capability === receipt.capability) {
+        await atomicJson(file, { edgeEntered: candidate.edgeEntered === true, receipt: candidate.receipt });
+        return;
+      }
+    }
+    await fs.rm(file, { force: true });
+  }
+
   async indexReceipt(receipt, append = true) {
     const line = JSON.stringify(receipt) + '\n';
     const paths = [];
@@ -176,17 +215,26 @@ export class ReceiptIndex {
     }
     if (receipt.executionId && receipt.connectionId) {
       const edge = receipt.providerEdgeEntered === true || receipt.outcome === 'external-unknown' || (receipt.outcome === 'failure' && receipt.attemptedExternal === true);
-      if (isTerminal(receipt)) await fs.rm(this.unresolvedPath(receipt.connectionId, receipt.executionId), { force: true });
+      if (isTerminal(receipt)) {
+        await fs.rm(this.unresolvedPath(receipt.connectionId, receipt.executionId), { force: true });
+        await this.updateUnresolvedSummary(receipt, false, { terminal: true });
+      }
       else {
         const previous = await readJson(this.unresolvedPath(receipt.connectionId, receipt.executionId));
-        await this.writeUnresolved(receipt, Boolean(previous?.edgeEntered || edge));
+        const edgeEntered = Boolean(previous?.edgeEntered || edge);
+        await this.writeUnresolved(receipt, edgeEntered);
+        await this.updateUnresolvedSummary(receipt, edgeEntered);
       }
     } else if (receipt.connectionId && receipt.idempotencyKey
       && ['pending', 'budget-reserved', 'failure'].includes(receipt.outcome)) {
       const legacyDir = path.join(this.unresolvedDir, safeComponent(receipt.connectionId));
       const legacyPath = path.join(legacyDir, 'legacy-' + safeComponent(receipt.receiptId) + '.json');
       if (isTerminal(receipt)) await fs.rm(legacyPath, { force: true });
-      else await atomicJson(legacyPath, { edgeEntered: receipt.outcome === 'failure' && receipt.attemptedExternal === true, receipt });
+      else {
+        const edgeEntered = receipt.outcome === 'failure' && receipt.attemptedExternal === true;
+        await atomicJson(legacyPath, { edgeEntered, receipt });
+        await this.updateUnresolvedSummary(receipt, edgeEntered);
+      }
     }
   }
 
@@ -308,18 +356,17 @@ export class ReceiptIndex {
     ];
   }
 
-  async unresolvedReceipts(connectionId) {
+  async unresolvedReceipts(connectionId, capability) {
     await this.ensure();
-    const dir = path.join(this.unresolvedDir, safeComponent(connectionId));
-    let files;
-    try { files = await fs.readdir(dir); }
-    catch (err) { if (err.code === 'ENOENT') return []; throw err; }
-    const records = [];
-    for (const name of files) {
-      if (!name.endsWith('.json')) continue;
-      const record = await readJson(path.join(dir, name));
-      if (record?.receipt) records.push({ ...record.receipt, providerEdgeEntered: record.edgeEntered });
+    if (!capability) return [];
+    const file = this.unresolvedSummaryPath(connectionId, capability);
+    try {
+      const record = await readJson(file);
+      return record?.receipt ? [{ ...record.receipt, providerEdgeEntered: record.edgeEntered }] : [];
+    } catch {
+      await this.rebuild();
+      const record = await readJson(file);
+      return record?.receipt ? [{ ...record.receipt, providerEdgeEntered: record.edgeEntered }] : [];
     }
-    return records;
   }
 }
