@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fail } from './errors.js';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const TAIL_ANCHOR_BYTES = 512;
 const DAY_MS = 86_400_000;
 
@@ -64,6 +64,7 @@ export class ReceiptIndex {
     this.unresolvedSummaryDir = path.join(this.root, 'unresolved-summary');
     this.rebuilding = false;
     this.rebuildFileStates = null;
+    this.rebuildIdempotencyCurrent = null;
   }
 
   async failCorrupt(message, details = {}) {
@@ -103,6 +104,7 @@ export class ReceiptIndex {
     ]);
     this.rebuilding = true;
     this.rebuildFileStates = new Map();
+    this.rebuildIdempotencyCurrent = new Map();
     this.catalogFiles = new Set();
     let offset = 0;
     let lineNumber = 0;
@@ -118,7 +120,7 @@ export class ReceiptIndex {
         });
       }
       validReceiptCount += 1;
-      await this.indexReceipt(receipt);
+      await this.indexReceipt(receipt, { offset, lineLength: line.length });
     };
     const stat = await this.logStat();
     if (stat) {
@@ -140,10 +142,41 @@ export class ReceiptIndex {
         offset += pending.length;
       }
     }
+    let receiptLogHandle = null;
+    if (this.rebuildIdempotencyCurrent.size > 0) receiptLogHandle = await fs.open(this.receiptsPath, 'r');
+    try {
+      for (const [bucket, pointers] of [...this.rebuildIdempotencyCurrent]) {
+        const entries = new Map();
+        for (const [keyHash, pointer] of pointers) {
+          const offset = pointer.offset;
+          const line = Buffer.alloc(pointer.lineLength);
+          const { bytesRead } = await receiptLogHandle.read(line, 0, line.length, offset);
+          if (bytesRead !== line.length) {
+            await this.failCorrupt('Connections receipt history changed while its idempotency index was rebuilding', {
+              byteOffset: offset
+            });
+          }
+          let receipt;
+          try { receipt = JSON.parse(line.toString('utf8')); }
+          catch { await this.failCorrupt('Connections receipt log contains malformed data during idempotency index rebuild', { byteOffset: offset }); }
+          entries.set(keyHash, {
+            receipt,
+            executionId: pointer.executionId || receipt.executionId || null
+          });
+        }
+        const file = path.join(this.idempotencyDir, bucket + '.json');
+        await atomicJson(file, this.serializeCurrent(entries));
+        this.catalogFiles.add(path.relative(this.root, file).split(path.sep).join('/'));
+        this.rebuildIdempotencyCurrent.delete(bucket);
+      }
+    } finally {
+      await receiptLogHandle?.close();
+    }
     for (const [file, state] of this.rebuildFileStates) await atomicJson(file + '.meta.json', state);
     await atomicJson(this.catalogPath, { schemaVersion: SCHEMA_VERSION, files: [...this.catalogFiles].sort() });
     this.rebuilding = false;
     this.rebuildFileStates = null;
+    this.rebuildIdempotencyCurrent = null;
     await this.writeMeta(offset, await this.logStat());
   }
 
@@ -239,11 +272,10 @@ export class ReceiptIndex {
     return true;
   }
 
-  async indexReceipt(receipt) {
+  async indexReceipt(receipt, { offset, lineLength } = {}) {
     const line = JSON.stringify(receipt) + '\n';
     const paths = [];
     const key = indexedKey(receipt);
-    if (key) paths.push(path.join(this.idempotencyDir, safeComponent(key).slice(0, 3) + '.ndjson'));
     if (isBudgetEvidence(receipt)) {
       const day = String(receipt.timestamp || '').slice(0, 10) || 'unknown-day';
       paths.push(path.join(this.budgetDir, safeComponent(receipt.connectionId), day + '.ndjson'));
@@ -255,6 +287,23 @@ export class ReceiptIndex {
     }
     for (const file of paths) {
       if (!await this.appendIndexed(file, line)) return;
+    }
+    if (key) {
+      const keyHash = hash(key);
+      const bucket = keyHash.slice(0, 3);
+      if (this.rebuilding) {
+        let entries = this.rebuildIdempotencyCurrent.get(bucket);
+        if (!entries) {
+          entries = new Map();
+          this.rebuildIdempotencyCurrent.set(bucket, entries);
+        }
+        const previous = entries.get(keyHash);
+        const pointer = { offset, lineLength };
+        if (receipt.executionId || previous?.executionId) pointer.executionId = receipt.executionId || previous.executionId;
+        entries.set(keyHash, pointer);
+      } else {
+        await this.writeCurrentIdempotency(key, receipt);
+      }
     }
     if (receipt.executionId && receipt.connectionId) {
       const edge = receipt.providerEdgeEntered === true || receipt.outcome === 'external-unknown' || (receipt.outcome === 'failure' && receipt.attemptedExternal === true);
@@ -413,8 +462,32 @@ export class ReceiptIndex {
     if (!idempotencyKey) return [];
     await this.ensure();
     const key = [connectionId || '', capability || '', idempotencyKey].join('\0');
-    const records = await this.readIndexed(path.join(this.idempotencyDir, safeComponent(key).slice(0, 3) + '.ndjson'));
-    return records.filter((receipt) => indexedKey(receipt) === key);
+    const result = [];
+    let pending = Buffer.alloc(0);
+    const processLine = async (line) => {
+      if (!line.trim()) return;
+      let receipt;
+      try { receipt = JSON.parse(line); }
+      catch { await this.failCorrupt('Connections receipt log contains malformed data during idempotency history inspection'); }
+      if (indexedKey(receipt) === key) result.push(receipt);
+    };
+    try {
+      for await (const data of createReadStream(this.receiptsPath)) {
+        const chunk = Buffer.concat([pending, data]);
+        let start = 0;
+        for (let i = 0; i < chunk.length; i += 1) {
+          if (chunk[i] !== 10) continue;
+          await processLine(chunk.subarray(start, i).toString('utf8'));
+          start = i + 1;
+        }
+        pending = chunk.subarray(start);
+      }
+      if (pending.length) await processLine(pending.toString('utf8'));
+    } catch (err) {
+      if (err.code === 'ENOENT') return [];
+      throw err;
+    }
+    return result;
   }
 
   async executionHistory(executionId) {
@@ -446,5 +519,73 @@ export class ReceiptIndex {
       const record = await readJson(file);
       return record?.receipt ? [{ ...record.receipt, providerEdgeEntered: record.edgeEntered }] : [];
     }
+  }
+
+  serializeCurrent(entries) {
+    const value = Object.fromEntries([...entries.entries()].sort(([a], [b]) => a.localeCompare(b)));
+    return { schemaVersion: SCHEMA_VERSION, entries: value, digest: hash(JSON.stringify(value)) };
+  }
+
+  async writeCurrentIdempotency(key, receipt) {
+    const keyHash = hash(key);
+    const bucket = keyHash.slice(0, 3);
+    const file = path.join(this.idempotencyDir, bucket + '.json');
+    const relative = path.relative(this.root, file).split(path.sep).join('/');
+    let current = new Map();
+    if (this.catalogFiles?.has(relative)) {
+      let record;
+      try { record = await readJson(file); }
+      catch { await this.rebuild(); return; }
+      if (!record || record.schemaVersion !== SCHEMA_VERSION || !record.entries
+        || record.digest !== hash(JSON.stringify(record.entries))) {
+        await this.rebuild();
+        return;
+      }
+      current = new Map(Object.entries(record.entries));
+    } else {
+      try {
+        await fs.stat(file);
+        await this.rebuild();
+        return;
+      } catch (err) { if (err.code !== 'ENOENT') throw err; }
+    }
+    const previous = current.get(keyHash);
+    current.set(keyHash, {
+      receipt,
+      executionId: receipt.executionId || previous?.executionId || null
+    });
+    await atomicJson(file, this.serializeCurrent(current));
+    if (!this.catalogFiles.has(relative)) {
+      this.catalogFiles.add(relative);
+      await atomicJson(this.catalogPath, { schemaVersion: SCHEMA_VERSION, files: [...this.catalogFiles].sort() });
+    }
+  }
+
+  async idempotencyLatest({ connectionId, capability, idempotencyKey }) {
+    if (!idempotencyKey) return null;
+    await this.ensure();
+    const key = [connectionId || '', capability || '', idempotencyKey].join('\0');
+    const keyHash = hash(key);
+    const file = path.join(this.idempotencyDir, keyHash.slice(0, 3) + '.json');
+    const relative = path.relative(this.root, file).split(path.sep).join('/');
+    if (!this.catalogFiles?.has(relative)) {
+      try {
+        await fs.stat(file);
+        await this.rebuild();
+        return this.idempotencyLatest({ connectionId, capability, idempotencyKey });
+      } catch (err) {
+        if (err.code !== 'ENOENT') throw err;
+        return null;
+      }
+    }
+    let record;
+    try { record = await readJson(file); }
+    catch { await this.rebuild(); return this.idempotencyLatest({ connectionId, capability, idempotencyKey }); }
+    if (!record || record.schemaVersion !== SCHEMA_VERSION || !record.entries
+      || record.digest !== hash(JSON.stringify(record.entries))) {
+      await this.rebuild();
+      return this.idempotencyLatest({ connectionId, capability, idempotencyKey });
+    }
+    return record.entries[keyHash] || null;
   }
 }

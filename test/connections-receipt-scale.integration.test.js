@@ -27,15 +27,22 @@ test('receipt indexes recover an appended ledger tail and keep idempotency and r
   await fs.appendFile(path.join(home, 'receipts.ndjson'), JSON.stringify(crashedWriterRecord) + '\n');
   const history = await service.store.idempotencyHistory(key);
   assert.deepEqual(history.map((receipt) => receipt.receiptId), [first.receiptId, crashedWriterRecord.receiptId]);
+  const latest = await service.store.idempotencyLatest(key);
+  assert.equal(latest.receipt.receiptId, crashedWriterRecord.receiptId);
+  assert.equal(latest.executionId, crashedWriterRecord.executionId);
   assert.equal((await service.store.findIdempotentReceipt({ ...key, outcomes: ['success'] })).receiptId, crashedWriterRecord.receiptId);
   assert.deepEqual((await service.store.budgetReceipts('api')).map((receipt) => receipt.receiptId), [crashedWriterRecord.receiptId]);
   assert.equal((await service.store.readReceipts()).length, 3);
 
-  const bucketDir = path.join(home, '.receipt-index', 'idempotency');
-  const bucket = (await fs.readdir(bucketDir)).find((name) => name.endsWith('.ndjson'));
-  await fs.rm(path.join(bucketDir, bucket));
+  const currentDir = path.join(home, '.receipt-index', 'idempotency');
+  const currentShard = (await fs.readdir(currentDir)).find((name) => name.endsWith('.json'));
+  await fs.rm(path.join(currentDir, currentShard));
+  assert.equal((await service.store.idempotencyLatest(key)).receipt.receiptId, crashedWriterRecord.receiptId);
   assert.deepEqual((await service.store.idempotencyHistory(key)).map((receipt) => receipt.receiptId), [first.receiptId, crashedWriterRecord.receiptId]);
   assert.equal((await service.store.readReceipts()).length, 3);
+
+  await fs.writeFile(path.join(currentDir, currentShard), '{corrupt');
+  assert.equal((await service.store.idempotencyLatest(key)).receipt.receiptId, crashedWriterRecord.receiptId);
 
   await fs.rm(path.join(home, '.receipt-index'), { recursive: true, force: true });
   assert.equal((await service.store.findIdempotentReceipt({ ...key, outcomes: ['success'] })).receiptId, crashedWriterRecord.receiptId);
@@ -62,6 +69,23 @@ test('unresolved execution lookup is capability-scoped and promotes the next pen
   assert.equal(promoted.length, 1);
   assert.equal(promoted[0].executionId, 'cxe-unresolved-b');
   assert.deepEqual(await service.store.unresolvedReceipts('api', 'other-capability'), []);
+});
+
+test('latest idempotency state retains the last execution identity when a legacy receipt omits it', async () => {
+  const home = await tmpHome();
+  const service = await readyService(home);
+  const key = { connectionId: 'api', capability: 'send', idempotencyKey: 'legacy-key' };
+  await service.store.appendReceipt({
+    receiptId: 'cxr-legacy-key-first', timestamp: new Date().toISOString(),
+    ...key, executionId: 'cxe-legacy-key', outcome: 'pending', executionActive: true
+  });
+  await service.store.appendReceipt({
+    receiptId: 'cxr-legacy-key-latest', timestamp: new Date().toISOString(),
+    ...key, outcome: 'failure', attemptedExternal: false
+  });
+  const latest = await service.store.idempotencyLatest(key);
+  assert.equal(latest.receipt.receiptId, 'cxr-legacy-key-latest');
+  assert.equal(latest.executionId, 'cxe-legacy-key');
 });
 
 test('indexed execution fails closed when the append-only receipt history is corrupted', async () => {

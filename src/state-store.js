@@ -455,6 +455,10 @@ export class StateStore {
     return this.receiptIndex.idempotencyHistory({ connectionId, capability, idempotencyKey });
   }
 
+  async idempotencyLatest({ connectionId, capability, idempotencyKey }) {
+    return this.receiptIndex.idempotencyLatest({ connectionId, capability, idempotencyKey });
+  }
+
   async executionHistory(executionId) {
     return this.receiptIndex.executionHistory(executionId);
   }
@@ -469,6 +473,8 @@ export class StateStore {
 
   async findIdempotentReceipt({ connectionId, capability, idempotencyKey, outcomes = ['success'] }) {
     if (!idempotencyKey) return null;
+    const latest = await this.idempotencyLatest({ connectionId, capability, idempotencyKey });
+    if (latest && outcomes.includes(latest.receipt.outcome)) return latest.receipt;
     const receipts = await this.idempotencyHistory({ connectionId, capability, idempotencyKey });
     return receipts.findLast((r) => outcomes.includes(r.outcome)) || null;
   }

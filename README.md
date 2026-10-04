@@ -293,7 +293,7 @@ See `docs/SECURITY.md` and `docs/RESEARCH-2026-09-13.md`.
 
 ### Receipt history and indexed execution
 
-The append-only `receipts.ndjson` file remains the canonical, immutable audit history. Execution does not parse that lifetime log for every request. A rebuildable `.receipt-index/` stores hash-partitioned idempotency lookup rows, per-connection UTC-day budget evidence, and only currently unresolved execution histories. The idempotency index uses 4,096 stable hash buckets; budget queries open only the connection's current and previous UTC-day partitions.
+The append-only `receipts.ndjson` file remains the canonical, immutable audit history. Execution does not parse that lifetime log for every request. A rebuildable `.receipt-index/` stores one latest idempotency state per key in 4,096 stable hash buckets, per-connection UTC-day budget evidence, and only currently unresolved execution histories. Same-key retries therefore read compact current state regardless of how many historical receipts use that key. Explicit full idempotency-history inspection streams the canonical log; it is not used on the execution path. Budget queries open only the connection's current and previous UTC-day partitions.
 
 Index updates follow the canonical receipt append. If a process stops after the receipt reaches the log but before the index checkpoint advances, the next locked operation validates and indexes the uncheckpointed tail. If the derived index is missing or malformed, it is rebuilt from the preserved receipt log. Malformed canonical history still blocks execution and is never truncated or rewritten by index recovery.
 

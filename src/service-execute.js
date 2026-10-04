@@ -5,16 +5,6 @@ import { assertInstallationSystem } from './system-binding.js';
 import { nowIso, randomId } from './util.js';
 import { executionOwnerLiveness, inspectExternalEffects, makeExecutionOwner, markExecutionActive, markExecutionInactive } from './external-effect-state.js';
 
-function idempotencyMatch(receipt, id, request) {
-  return receipt.connectionId === id
-    && receipt.capability === request.capability
-    && receipt.idempotencyKey === request.idempotencyKey;
-}
-
-function executionHistory(receipts, executionId) {
-  return receipts.filter((r) => r.executionId === executionId);
-}
-
 async function releaseBudgetReservation(store, receipt, resolution = 'not-attempted') {
   if (!receipt?.budgetReservationId) return;
   await store.appendReceipt({
@@ -99,12 +89,12 @@ async function recordRecoveredUnknown(store, id, request, executionId, owner, la
 
 async function reserveExecution(service, id, request, executionId, owner) {
   return service.store.withLock(async () => {
-    const all = request.idempotencyKey
-      ? await service.store.idempotencyHistory({ connectionId: id, capability: request.capability, idempotencyKey: request.idempotencyKey })
-      : await service.store.unresolvedReceipts(id, request.capability);
+    const indexed = request.idempotencyKey
+      ? await service.store.idempotencyLatest({ connectionId: id, capability: request.capability, idempotencyKey: request.idempotencyKey })
+      : null;
+    const all = request.idempotencyKey ? [] : await service.store.unresolvedReceipts(id, request.capability);
     if (request.idempotencyKey) {
-      const prior = all.filter((r) => idempotencyMatch(r, id, request));
-      const latest = prior.at(-1);
+      const latest = indexed?.receipt;
       if (latest?.outcome === 'success' || latest?.outcome === 'provider-error') return { terminal: latest };
       if (latest?.outcome === 'external-reconciled-applied') return { reconciledApplied: latest };
       if (latest?.outcome === 'failure' && latest.attemptedExternal !== true) return { terminalFailure: latest };
@@ -112,8 +102,8 @@ async function reserveExecution(service, id, request, executionId, owner) {
       if (latest?.outcome === 'abandoned-pre-provider' || latest?.outcome === 'external-reconciled-not-applied') {
         // The previous operation was proven not to have crossed the provider edge.
       } else if (latest && ['pending', 'budget-reserved', 'external-unknown'].includes(latest.outcome)) {
-        const currentExecutionId = latest.executionId || prior.findLast((r) => r.executionId)?.executionId;
-        const history = currentExecutionId ? await service.store.executionHistory(currentExecutionId) : prior;
+        const currentExecutionId = latest.executionId || indexed.executionId;
+        const history = currentExecutionId ? await service.store.executionHistory(currentExecutionId) : [latest];
         const currentOwner = latest.executionOwner || history.findLast((r) => r.executionOwner)?.executionOwner;
         const crossedEdge = history.some((r) => r.providerEdgeEntered === true || r.outcome === 'external-unknown');
         const liveness = latest.executionActive === false ? 'dead' : executionOwnerLiveness(currentOwner);
