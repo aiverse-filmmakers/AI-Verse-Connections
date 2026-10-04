@@ -36,6 +36,28 @@ test('receipt indexes recover an appended ledger tail and keep idempotency and r
   assert.equal((await service.store.readReceipts()).length, 3);
 });
 
+
+test('unresolved execution lookup is capability-scoped and promotes the next pending effect', async () => {
+  const home = await tmpHome();
+  const service = await readyService(home);
+  const base = { connectionId: 'api', capability: 'send', timestamp: new Date().toISOString(), outcome: 'pending', executionActive: true };
+  await service.store.appendReceipt({ ...base, receiptId: 'cxr-unresolved-a', executionId: 'cxe-unresolved-a' });
+  await service.store.appendReceipt({ ...base, receiptId: 'cxr-unresolved-b', executionId: 'cxe-unresolved-b' });
+  const first = await service.store.unresolvedReceipts('api', 'send');
+  assert.equal(first.length, 1);
+  assert.equal(first[0].executionId, 'cxe-unresolved-a');
+
+  await service.store.appendReceipt({
+    receiptId: 'cxr-unresolved-a-reconciled', timestamp: new Date().toISOString(),
+    connectionId: 'api', capability: 'send', executionId: 'cxe-unresolved-a',
+    outcome: 'external-reconciled-not-applied', attemptedExternal: false
+  });
+  const promoted = await service.store.unresolvedReceipts('api', 'send');
+  assert.equal(promoted.length, 1);
+  assert.equal(promoted[0].executionId, 'cxe-unresolved-b');
+  assert.deepEqual(await service.store.unresolvedReceipts('api', 'other-capability'), []);
+});
+
 test('indexed execution fails closed when the append-only receipt history is corrupted', async () => {
   const home = await tmpHome();
   const service = await readyService(home);
