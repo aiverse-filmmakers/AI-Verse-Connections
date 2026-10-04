@@ -177,6 +177,12 @@ export class ReceiptIndex {
         const previous = await readJson(this.unresolvedPath(receipt.connectionId, receipt.executionId));
         await this.writeUnresolved(receipt, Boolean(previous?.edgeEntered || edge));
       }
+    } else if (receipt.connectionId && receipt.idempotencyKey
+      && ['pending', 'budget-reserved', 'failure'].includes(receipt.outcome)) {
+      const legacyDir = path.join(this.unresolvedDir, safeComponent(receipt.connectionId));
+      const legacyPath = path.join(legacyDir, 'legacy-' + safeComponent(receipt.receiptId) + '.json');
+      if (isTerminal(receipt)) await fs.rm(legacyPath, { force: true });
+      else await atomicJson(legacyPath, { edgeEntered: receipt.outcome === 'failure' && receipt.attemptedExternal === true, receipt });
     }
   }
 
