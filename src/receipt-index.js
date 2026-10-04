@@ -97,6 +97,7 @@ export class ReceiptIndex {
     ]);
     let offset = 0;
     let lineNumber = 0;
+    let validReceiptCount = 0;
     const processLine = async (line) => {
       lineNumber += 1;
       if (!line.toString('utf8').trim()) return;
@@ -104,9 +105,10 @@ export class ReceiptIndex {
       try { receipt = JSON.parse(line.toString('utf8')); }
       catch {
         await this.failCorrupt('Connections receipt log contains malformed data; history was preserved and external execution is blocked', {
-          line: lineNumber, byteOffset: offset, validReceiptCount: lineNumber - 1
+          line: lineNumber, byteOffset: offset, validReceiptCount
         });
       }
+      validReceiptCount += 1;
       await this.indexReceipt(receipt, false);
     };
     const stat = await this.logStat();
