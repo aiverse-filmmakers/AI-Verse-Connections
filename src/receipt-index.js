@@ -61,6 +61,8 @@ export class ReceiptIndex {
     this.budgetDir = path.join(this.root, 'budget');
     this.unresolvedDir = path.join(this.root, 'unresolved');
     this.unresolvedSummaryDir = path.join(this.root, 'unresolved-summary');
+    this.rebuilding = false;
+    this.rebuildFileStates = null;
   }
 
   async failCorrupt(message, details = {}) {
@@ -112,7 +114,7 @@ export class ReceiptIndex {
         });
       }
       validReceiptCount += 1;
-      await this.indexReceipt(receipt, false);
+      await this.indexReceipt(receipt);
     };
     const stat = await this.logStat();
     if (stat) {
@@ -186,7 +188,43 @@ export class ReceiptIndex {
     await fs.rm(file, { force: true });
   }
 
-  async indexReceipt(receipt, append = true) {
+  async appendIndexed(file, line) {
+    await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    const lineBytes = Buffer.byteLength(line, 'utf8');
+    if (this.rebuilding) {
+      const state = this.rebuildFileStates.get(file) || { schemaVersion: SCHEMA_VERSION, count: 0, bytes: 0, digest: hash('') };
+      await fs.appendFile(file, line, { mode: 0o600 });
+      state.count += 1;
+      state.bytes += lineBytes;
+      state.digest = hash(state.digest + '\0' + line.trimEnd());
+      this.rebuildFileStates.set(file, state);
+      return true;
+    }
+    let meta;
+    try { meta = await readJson(file + '.meta.json'); }
+    catch { await this.rebuild(); return false; }
+    let stat;
+    try { stat = await fs.stat(file); }
+    catch (err) { if (err.code !== 'ENOENT') throw err; }
+    if (!meta) {
+      if (stat?.size) { await this.rebuild(); return false; }
+      meta = { schemaVersion: SCHEMA_VERSION, count: 0, bytes: 0, digest: hash('') };
+    }
+    if (meta.schemaVersion !== SCHEMA_VERSION || meta.bytes !== (stat?.size || 0)) {
+      await this.rebuild();
+      return false;
+    }
+    await fs.appendFile(file, line, { mode: 0o600 });
+    await atomicJson(file + '.meta.json', {
+      schemaVersion: SCHEMA_VERSION,
+      count: meta.count + 1,
+      bytes: meta.bytes + lineBytes,
+      digest: hash(meta.digest + '\0' + line.trimEnd())
+    });
+    return true;
+  }
+
+  async indexReceipt(receipt) {
     const line = JSON.stringify(receipt) + '\n';
     const paths = [];
     const key = indexedKey(receipt);
@@ -197,29 +235,18 @@ export class ReceiptIndex {
     }
     if (receipt.executionId) {
       const executionPath = path.join(this.executionDir, safeComponent(receipt.executionId) + '.ndjson');
-      paths.push(executionPath);
       if (isTerminal(receipt)) await fs.rm(executionPath, { force: true });
+      else paths.push(executionPath);
     }
-    if (append) {
-      for (const file of paths) {
-        if (file.startsWith(this.executionDir) && isTerminal(receipt)) continue;
-        await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-        await fs.appendFile(file, line, { mode: 0o600 });
-      }
-    } else {
-      for (const file of paths) {
-        if (file.startsWith(this.executionDir) && isTerminal(receipt)) continue;
-        await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-        await fs.appendFile(file, line, { mode: 0o600 });
-      }
+    for (const file of paths) {
+      if (!await this.appendIndexed(file, line)) return;
     }
     if (receipt.executionId && receipt.connectionId) {
       const edge = receipt.providerEdgeEntered === true || receipt.outcome === 'external-unknown' || (receipt.outcome === 'failure' && receipt.attemptedExternal === true);
       if (isTerminal(receipt)) {
         await fs.rm(this.unresolvedPath(receipt.connectionId, receipt.capability, receipt.executionId), { force: true });
         await this.updateUnresolvedSummary(receipt, false, { terminal: true });
-      }
-      else {
+      } else {
         const previous = await readJson(this.unresolvedPath(receipt.connectionId, receipt.capability, receipt.executionId));
         const edgeEntered = Boolean(previous?.edgeEntered || edge);
         await this.writeUnresolved(receipt, edgeEntered);
