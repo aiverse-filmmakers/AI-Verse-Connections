@@ -9,3 +9,5 @@ The gate must find a successful native workflow run whose `head_sha` equals `des
 A pinned candidate revision remains valid after later metadata-only maintainer commits unless component code or the designated native workflow contract changes.
 
 This record has owner-local metadata authority only. It cannot qualify or modify the AI-Verse Distribution component set, admit an Agent or Full release, publish a member feature-release record, grant permissions, change scope/direction ownership, enable a disabled component, expose a remote listener, or report live-health truth.
+
+<!-- Slice 4.3 T4 temporary PR-path validation fixture. -->
