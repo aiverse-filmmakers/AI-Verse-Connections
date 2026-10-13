@@ -1,0 +1,85 @@
+name: Release Descriptor
+
+on:
+  pull_request:
+    paths:
+      - "release/component-release.json"
+      - ".github/workflows/release-descriptor.yml"
+      - "docs/RELEASE-DESCRIPTOR.md"
+  push:
+    branches: [main]
+    paths:
+      - "release/component-release.json"
+      - ".github/workflows/release-descriptor.yml"
+      - "docs/RELEASE-DESCRIPTOR.md"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate release descriptor
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const d = JSON.parse(fs.readFileSync("release/component-release.json", "utf8"));
+          const sha = /^[0-9a-f]{40}$/;
+          if (d.schema_version !== "ai-verse.component-release/v1") throw new Error("wrong schema_version");
+          if (d.component_id !== "ai-verse-connections") throw new Error("wrong component_id");
+          if (!sha.test(d.revision)) throw new Error("revision must be exact 40-char sha");
+          if (!["candidate", "accepted"].includes(d.release_status)) throw new Error("release_status must be candidate or accepted");
+          if (d.semantics?.release_metadata_only !== true || d.semantics?.live_health_truth !== false) throw new Error("descriptor must remain release metadata only");
+          for (const key of ["preserve_on_update", "preserve_on_uninstall", "preserve_unknown_user_files"]) if (d.state?.[key] !== true) throw new Error(key + " must be true");
+          for (const key of ["grants_permissions", "changes_direction_owner", "changes_scope", "enables_disabled_component", "exposes_remote_listener"]) if (d.authority?.[key] !== false) throw new Error(key + " must be false");
+          const migration = d.migration || {};
+          if (!["non-breaking", "breaking"].includes(migration.change_classification)) throw new Error("migration.change_classification must be non-breaking or breaking");
+          if (migration.change_classification === "breaking") {
+            if (!Array.isArray(migration.from_versions) || !migration.from_versions.length) throw new Error("breaking change requires predecessor scope");
+            if (!["explicit-migration", "blocked"].includes(migration.compatibility)) throw new Error("breaking change requires explicit-migration or blocked compatibility");
+            if (migration.compatibility === "explicit-migration" && migration.requires_explicit_migration !== true) throw new Error("explicit migration must be required");
+            if (migration.compatibility === "blocked" && d.release_status === "accepted") throw new Error("blocked breaking change cannot be accepted");
+          }
+          if (d.release_status === "accepted") {
+            for (const group of ["ci", "acceptance"]) {
+              if (!Array.isArray(d.evidence?.[group]) || !d.evidence[group].length) throw new Error("missing " + group + " evidence");
+              for (const e of d.evidence[group]) if (e.status !== "pass" || e.revision !== d.revision) throw new Error(group + " evidence must pass and bind exact revision");
+            }
+          }
+          console.log("descriptor structure OK", d.component_id, d.version, d.revision, d.release_status);
+          NODE
+          REVISION="$(node -p 'require("./release/component-release.json").revision')"
+          git cat-file -e "$REVISION^{commit}"
+      - name: Verify native owner workflow on exact descriptor revision
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NATIVE_WORKFLOW: ci.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          REVISION="$(node -p 'require("./release/component-release.json").revision')"
+          export REVISION NATIVE_WORKFLOW
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/$NATIVE_WORKFLOW/runs?head_sha=$REVISION&status=success&per_page=100" \
+            -o /tmp/native-owner-runs.json
+          node <<'NODE'
+          const fs = require("node:fs");
+          const payload = JSON.parse(fs.readFileSync("/tmp/native-owner-runs.json", "utf8"));
+          const expectedPath = `.github/workflows/${process.env.NATIVE_WORKFLOW}`;
+          const matches = (payload.workflow_runs || []).filter((run) => run.head_sha === process.env.REVISION && run.conclusion === "success" && run.path === expectedPath);
+          if (!matches.length) throw new Error(`no successful ${expectedPath} run exists on exact descriptor revision ${process.env.REVISION}`);
+          console.log("owner-local exact-revision evidence OK", matches[0].id, process.env.REVISION);
+          NODE
+          echo "This proves owner-local candidate fitness only. It does not qualify the Distribution current component set, admit an Agent/Full release, report live health, or create a member feature-release record."
