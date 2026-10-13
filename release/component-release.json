@@ -14,7 +14,7 @@
   "runtime_requirements": {"python": null, "node": ">=20.0.0", "other": []},
   "lifecycle": {"install": true, "setup": false, "status": false, "doctor": false, "enable": false, "disable": false, "update": true, "uninstall": true},
   "state": {"canonical_state_owned": true, "preserve_on_update": true, "preserve_on_uninstall": true, "preserve_unknown_user_files": true, "state_format": null},
-  "migration": {"change_classification": "non-breaking", "compatibility": "none-required", "from_versions": [], "requires_explicit_migration": false, "owner_controlled": true, "checkpoint_policy": "not-required"},
+  "migration": {"change_classification": "breaking", "compatibility": "none-required", "from_versions": [], "requires_explicit_migration": false, "owner_controlled": true, "checkpoint_policy": "not-required"},
   "authority": {"grants_permissions": false, "changes_direction_owner": false, "changes_scope": false, "enables_disabled_component": false, "exposes_remote_listener": false},
   "evidence": {
     "ci": [{"kind": "owner-native-ci", "status": "pass", "revision": "602a1c52ab782cc9a8b7a4caa60ccb29efe403d1", "run_id": "37182362458", "url": "https://github.com/aiverse-filmmakers/AI-Verse-Connections/actions/runs/37182362458"}],
