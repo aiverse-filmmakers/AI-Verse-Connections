@@ -102,7 +102,7 @@ test('KIE-specific response validation cannot silently fall back to an unrelated
 });
 
 test('delayed verification cannot restore a revoked or replaced provider credential', async (t) => {
-  for (const change of ['revoke', 'replace']) {
+  for (const change of ['revoke', 'replace', 'replace-denied']) {
     let signalRequest;
     let releaseRequest;
     const started = new Promise((resolve) => { signalRequest = resolve; });
@@ -115,7 +115,7 @@ test('delayed verification cannot restore a revoked or replaced provider credent
         signalRequest();
         await blocked;
       }
-      res.writeHead(204).end();
+      res.writeHead(calls === 1 && change === 'replace-denied' ? 401 : 204).end();
     });
     t.after(server.close);
     const service = await readyService(await tmpHome(), {
