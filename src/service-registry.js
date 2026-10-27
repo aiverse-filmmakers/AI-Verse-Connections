@@ -118,11 +118,14 @@ export async function verify(id) {
   let result;
   try { result = await adapter.verify(initial, effectiveLimits(initial)); }
   catch (err) {
+    let changed = false;
     await this.store.mutateRegistry((r) => {
       const c = r.connections[id];
-      // Never let a stale error overwrite a replacement or revocation.
-      if (c && sameCredentialRevision(initial, c)) c.status = { ...c.status, liveVerified: false, healthy: false, authorized: false, approved: false, lastVerifiedAt: nowIso(), lastError: err.code || err.message };
+      // Neither stale success nor stale failure describes the current credential.
+      if (!c || !sameCredentialRevision(initial, c)) { changed = true; return; }
+      c.status = { ...c.status, liveVerified: false, healthy: false, authorized: false, approved: false, lastVerifiedAt: nowIso(), lastError: err.code || err.message };
     });
+    if (changed) fail('CONNECTION_CHANGED_DURING_VERIFY', 'Connection changed during verification; retry explicitly');
     throw err;
   }
   return this.store.mutateRegistry(async (r) => {
