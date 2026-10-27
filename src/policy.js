@@ -29,7 +29,10 @@ export function assertConnectionUsable(connection, request) {
   const cap = connection.capabilities?.[request.capability];
   if (!cap || !cap.admitted) fail('CAPABILITY_NOT_ADMITTED', `Capability ${request.capability} is not admitted`);
   if (cap.reviewRequired) fail('CAPABILITY_REVIEW_REQUIRED', `Capability ${request.capability} changed and requires permission review`);
-  if (request.grantedCapabilities && !request.grantedCapabilities.includes(request.capability)) {
+  // Caller authority is mandatory, even for an already admitted read-only
+  // capability. Without an explicit lease, a direct service caller could
+  // bypass the delegated-authority intersection enforced by the CLI.
+  if (!Array.isArray(request.grantedCapabilities) || !request.grantedCapabilities.includes(request.capability)) {
     fail('DELEGATED_AUTHORITY_DENIED', 'Caller capability lease does not include this capability');
   }
   if (cap.risk !== 'read' && !request.approval?.approved) fail('ACTION_APPROVAL_REQUIRED', 'This external side effect requires an explicit approval at execution time');
