@@ -48,7 +48,8 @@ export async function revoke(id) {
   return this.store.mutateRegistry((r) => {
     const c = r.connections[id];
     if (!c) fail('CONNECTION_NOT_FOUND', `Connection ${id} not found`);
-    c.status = { ...c.status, authorized: false, approved: false, healthy: false, lastError: 'revoked' };
+    c.status = { ...c.status, liveVerified: false, authorized: false, approved: false, healthy: false, lastError: 'revoked' };
+    c.credentialRevision = (c.credentialRevision ?? 0) + 1;
     c.revokedAt = nowIso();
     return structuredClone(c);
   });
@@ -63,6 +64,8 @@ export async function reauth(id, credentialHandle) {
     assertInstallationSystem(lifecycle, c.systemId, { subject: `Connection ${id}` });
     assertMcpCredentialOriginBinding(r, c, credentialHandle);
     c.credentialHandle = credentialHandle;
+    c.credentialRevision = (c.credentialRevision ?? 0) + 1;
+    delete c.revokedAt; // Explicit re-auth unlocks verification; revocation alone never does.
     c.status = { ...c.status, liveVerified: false, healthy: false, authorized: false, approved: false, lastError: null };
     c.reauthAt = nowIso();
     return structuredClone(c);
