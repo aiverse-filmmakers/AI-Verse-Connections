@@ -48,7 +48,7 @@ export async function revoke(id) {
   return this.store.mutateRegistry((r) => {
     const c = r.connections[id];
     if (!c) fail('CONNECTION_NOT_FOUND', `Connection ${id} not found`);
-    c.status = { ...c.status, liveVerified: false, authorized: false, approved: false, healthy: false, lastError: 'revoked' };
+    c.status = { ...c.status, authorized: false, approved: false, healthy: false, lastError: 'revoked' };
     c.credentialRevision = (c.credentialRevision ?? 0) + 1;
     c.revokedAt = nowIso();
     return structuredClone(c);
