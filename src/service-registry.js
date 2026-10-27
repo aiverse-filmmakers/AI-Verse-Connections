@@ -110,7 +110,7 @@ export async function verify(id) {
   catch (err) {
     await this.store.mutateRegistry((r) => {
       const c = r.connections[id];
-      if (c) c.status = { ...c.status, liveVerified: false, healthy: false, authorized: false, lastVerifiedAt: nowIso(), lastError: err.code || err.message };
+      if (c) c.status = { ...c.status, liveVerified: false, healthy: false, authorized: false, approved: false, lastVerifiedAt: nowIso(), lastError: err.code || err.message };
     });
     throw err;
   }
