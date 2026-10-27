@@ -100,3 +100,54 @@ test('KIE-specific response validation cannot silently fall back to an unrelated
       healthCheck: 'kie-credit' }
   }), 'GENERIC_HEALTH_CHECK_CONFIG_INVALID');
 });
+
+test('delayed verification cannot restore a revoked or replaced provider credential', async (t) => {
+  for (const change of ['revoke', 'replace']) {
+    let signalRequest;
+    let releaseRequest;
+    const started = new Promise((resolve) => { signalRequest = resolve; });
+    const blocked = new Promise((resolve) => { releaseRequest = resolve; });
+    let calls = 0;
+    const server = await startServer(async (req, res) => {
+      if (req.url !== '/health' || req.method !== 'HEAD') return res.writeHead(404).end();
+      calls++;
+      if (calls === 1) {
+        signalRequest();
+        await blocked;
+      }
+      res.writeHead(204).end();
+    });
+    t.after(server.close);
+    const service = await readyService(await tmpHome(), {
+      AIVERSE_CONNECTIONS_MASTER_KEY: 'synthetic-master-key-0123456789abcd'
+    });
+    const { credentialHandle } = await service.putCredential('old-' + change, 'synthetic-old-key');
+    await service.addGeneric({
+      id: 'race', systemId: 'sys-a', workspaceIds: ['ws-a'], credentialHandle,
+      authorization: { type: 'bearer' },
+      config: { baseUrl: server.url, healthPath: '/health', healthMethod: 'HEAD',
+        allowedMethods: ['GET'], allowedPathPrefixes: ['/v1'] },
+      limits: { allowPrivateNetwork: true }, risk: 'read'
+    });
+    const checking = service.verify('race');
+    await started;
+    if (change === 'revoke') {
+      await service.revoke('race');
+    } else {
+      const next = await service.putCredential('new-' + change, 'synthetic-new-key');
+      await service.reauth('race', next.credentialHandle);
+    }
+    releaseRequest();
+    await expectCode(checking, 'CONNECTION_CHANGED_DURING_VERIFY');
+    const state = (await service.listConnections()).find((c) => c.id === 'race').status;
+    assert.equal(state.authorized, false);
+    assert.equal(state.approved, false);
+    if (change === 'revoke') {
+      await expectCode(service.verify('race'), 'CONNECTION_REVOKED');
+      const next = await service.putCredential('after-revoke', 'synthetic-reconnected-key');
+      await service.reauth('race', next.credentialHandle);
+    }
+    // An explicit replacement/re-auth may now be verified with its own key.
+    assert.equal((await service.verify('race')).status.authorized, true);
+  }
+});
