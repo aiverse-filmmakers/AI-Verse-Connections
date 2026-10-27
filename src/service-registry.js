@@ -14,6 +14,8 @@ export function baseConnection({ id, provider, systemId, workspaceIds = [], cred
     workspaceIds: [...new Set(workspaceIds)],
     enabled: true,
     credentialHandle,
+    // Incremented by revoke/reauth. Legacy entries without this field begin at revision 0.
+    credentialRevision: 0,
     authorization,
     config,
     limits: { ...DEFAULT_LIMITS, ...limits },
@@ -93,6 +95,13 @@ export async function listConnections() {
 }
 
 
+function sameCredentialRevision(before, after) {
+  return (before.credentialRevision ?? 0) === (after.credentialRevision ?? 0) &&
+    before.credentialHandle === after.credentialHandle &&
+    before.revokedAt === after.revokedAt && before.reauthAt === after.reauthAt &&
+    before.enabled === after.enabled;
+}
+
 export async function verify(id) {
   const initial = await this.store.withLock(async () => {
     const lifecycle = await this.store.getLifecycle();
@@ -101,6 +110,7 @@ export async function verify(id) {
     if (!connection) fail('CONNECTION_NOT_FOUND', `Connection ${id} not found`);
     assertInstallationSystem(lifecycle, connection.systemId, { subject: `Connection ${id}` });
     assertMcpCredentialOriginBinding(registry, connection);
+    if (connection.revokedAt) fail('CONNECTION_REVOKED', 'Re-authentication required after revocation');
     return structuredClone(connection);
   });
   const adapter = this.adapters[initial.provider];
@@ -108,10 +118,14 @@ export async function verify(id) {
   let result;
   try { result = await adapter.verify(initial, effectiveLimits(initial)); }
   catch (err) {
+    let changed = false;
     await this.store.mutateRegistry((r) => {
       const c = r.connections[id];
-      if (c) c.status = { ...c.status, liveVerified: false, healthy: false, authorized: false, lastVerifiedAt: nowIso(), lastError: err.code || err.message };
+      // Neither stale success nor stale failure describes the current credential.
+      if (!c || !sameCredentialRevision(initial, c)) { changed = true; return; }
+      c.status = { ...c.status, liveVerified: false, healthy: false, authorized: false, approved: false, lastVerifiedAt: nowIso(), lastError: err.code || err.message };
     });
+    if (changed) fail('CONNECTION_CHANGED_DURING_VERIFY', 'Connection changed during verification; retry explicitly');
     throw err;
   }
   return this.store.mutateRegistry(async (r) => {
@@ -119,6 +133,8 @@ export async function verify(id) {
     const c = r.connections[id];
     if (!c) fail('CONNECTION_NOT_FOUND', `Connection ${id} not found`);
     assertInstallationSystem(lifecycle, c.systemId, { subject: `Connection ${id}` });
+    // A completed probe is evidence only for the exact credential it checked.
+    if (!sameCredentialRevision(initial, c)) fail('CONNECTION_CHANGED_DURING_VERIFY', 'Connection changed during verification; retry explicitly');
     c.status = { ...c.status, liveVerified: true, healthy: !!result.healthy, authorized: !!result.authorized, lastVerifiedAt: nowIso(), lastError: null };
     if (c.provider === 'mcp') {
       const previous = c.capabilities || {};

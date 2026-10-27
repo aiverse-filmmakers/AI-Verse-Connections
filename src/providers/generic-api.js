@@ -15,6 +15,15 @@ export class GenericApiAdapter {
     const rawPrefixes = connection.config.allowedPathPrefixes || ['/'];
     if (!methods.length || !rawPrefixes.length) fail('GENERIC_POLICY_REQUIRED', 'Generic API connections require allowed methods and path prefixes');
     const prefixes = canonicalizeAllowedPathPrefixes(rawPrefixes);
+    const healthCheck = connection.config.healthCheck;
+    if (healthCheck !== undefined && healthCheck !== 'kie-credit') {
+      fail('GENERIC_HEALTH_CHECK_UNSUPPORTED', 'Unsupported generic API response check');
+    }
+    if (healthCheck === 'kie-credit' &&
+        (connection.config.healthPath !== '/api/v1/chat/credit' ||
+         String(connection.config.healthMethod || 'HEAD').toUpperCase() !== 'GET')) {
+      fail('GENERIC_HEALTH_CHECK_CONFIG_INVALID', 'KIE credit verification requires the documented GET credit endpoint');
+    }
     return { baseUrl, origin, methods, prefixes };
   }
 
@@ -23,6 +32,7 @@ export class GenericApiAdapter {
     if (auth.type === 'none') return {};
     const secret = await this.credentials.resolve(connection.credentialHandle);
     if (auth.type === 'bearer') return { Authorization: `Bearer ${secret}` };
+    if (auth.type === 'key') return { Authorization: `Key ${secret}` };
     if (auth.type === 'header') return { [cleanHeaderName(auth.headerName)]: secret };
     fail('AUTH_TYPE_UNSUPPORTED', `Unsupported generic API auth type: ${auth.type}`);
   }
@@ -56,9 +66,23 @@ export class GenericApiAdapter {
     if (!['HEAD', 'GET'].includes(healthMethod)) fail('INVALID_HEALTH_METHOD', 'Generic API health method must be HEAD or GET');
     const target = new URL(healthPath, `${baseUrl}/`);
     if (target.origin !== origin) fail('ORIGIN_MISMATCH', 'Health probe must remain on the registered origin');
-    const { response } = await boundedFetch(target.toString(), { method: healthMethod, headers: { ...authHeaders, Accept: 'application/json, text/plain;q=0.9, */*;q=0.1' } }, limits, origin, this.network);
+    const { response, buffer } = await boundedFetch(target.toString(), { method: healthMethod, headers: { ...authHeaders, Accept: 'application/json, text/plain;q=0.9, */*;q=0.1' } }, limits, origin, this.network);
     if (response.status === 401 || response.status === 403) fail('GENERIC_NOT_AUTHORIZED', `Generic API health probe rejected authorization with ${response.status}`);
     if (!response.ok) fail('GENERIC_HEALTH_FAILED', `Generic API health probe returned HTTP ${response.status}`);
+    if (connection.config.healthCheck === 'kie-credit') {
+      let body;
+      try { body = JSON.parse(buffer.toString('utf8')); }
+      catch { fail('GENERIC_HEALTH_FAILED', 'KIE credit check did not return valid JSON'); }
+      // KIE reports some API errors as HTTP 200; a successful HTTP response is not proof of authorization.
+      if (body?.code === 401 || body?.code === 403) {
+        fail('GENERIC_NOT_AUTHORIZED', 'KIE credit check rejected the key');
+      }
+      if (body?.code !== 200 || typeof body.data !== 'number' ||
+          !Number.isFinite(body.data) || body.data < 0) {
+        fail('GENERIC_HEALTH_FAILED', 'KIE credit check did not confirm account access');
+      }
+      // Zero credits still proves key access, not funding or generation readiness.
+    }
     return { authorized: true, healthy: true, details: { mode: 'live-network-probe', status: response.status, method: healthMethod, path: healthPath } };
   }
 

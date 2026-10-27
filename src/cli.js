@@ -56,7 +56,7 @@ export async function main(argv = process.argv.slice(2)) {
       if (sub === 'list') result = await service.listConnections();
       else if (sub === 'add-generic') result = await service.addGeneric({
         id: f.id, systemId: f.system, workspaceIds: split(f.workspaces), credentialHandle: f.credential || 'none',
-        authorization: f.auth === 'bearer' ? { type: 'bearer' } : f.auth === 'header' ? { type: 'header', headerName: f['header-name'] } : { type: 'none' },
+        authorization: f.auth === 'bearer' ? { type: 'bearer' } : f.auth === 'key' ? { type: 'key' } : f.auth === 'header' ? { type: 'header', headerName: f['header-name'] } : { type: 'none' },
         config: { baseUrl: f.url, allowedMethods: split(f.methods || 'GET'), allowedPathPrefixes: split(f.paths || '/'), healthPath: f['health-path'] || '/', healthMethod: f['health-method'] || 'HEAD' },
         limits: { allowPrivateNetwork: bool(f['allow-private-network']) }, risk: f.risk || 'write'
       });
